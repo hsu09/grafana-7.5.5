@@ -1,0 +1,77 @@
+name: Build Grafana RPM
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix_v1
+    paths:
+      - '.github/workflows/build-rpm.yml'
+      - 'pkg/tsdb/sqleng/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'package.json'
+      - 'yarn.lock'
+      - 'build.go'
+      - 'scripts/**'
+      - 'packaging/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build-rpm:
+    name: Build OSS linux x64 RPM
+    runs-on: ubuntu-20.04
+    timeout-minutes: 180
+
+    env:
+      BUILD_ID: 755${{ github.run_number }}
+      GRAFANA_BUILD_CONTAINER: grafana/build-container:1.4.1
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build RPM
+        run: |
+          set -euxo pipefail
+
+          docker run --rm \
+            -e DRONE_BUILD_NUMBER="${BUILD_ID}" \
+            -e GITHUB_TOKEN="${{ github.token }}" \
+            -e NODE_OPTIONS="--max_old_space_size=4096" \
+            -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
+            -w /go/src/github.com/grafana/grafana \
+            "${GRAFANA_BUILD_CONTAINER}" \
+            bash -lc '
+              set -euxo pipefail
+
+              mkdir -p bin
+              curl -fL -o bin/grabpl https://grafana-downloads.storage.googleapis.com/grafana-build-pipeline/v0.5.43/grabpl
+              chmod +x bin/grabpl
+
+              yarn install --pure-lockfile --no-progress
+
+              ./bin/grabpl build-backend --jobs 4 --edition oss --build-id "${DRONE_BUILD_NUMBER}" --variants linux-x64 --no-pull-enterprise
+              ./bin/grabpl build-frontend --jobs 4 --edition oss --build-id "${DRONE_BUILD_NUMBER}" --no-install-deps --no-pull-enterprise
+              ./bin/grabpl build-plugins --jobs 4 --edition oss --no-install-deps
+              ./bin/grabpl gen-version --build-id "${DRONE_BUILD_NUMBER}"
+
+              . scripts/build/gpg-test-vars.sh
+              ./bin/grabpl package --jobs 4 --edition oss --build-id "${DRONE_BUILD_NUMBER}" --no-pull-enterprise --variants linux-x64
+
+              find dist -maxdepth 1 -type f -name "*.rpm" -ls
+            '
+
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: grafana-7.5.5-unlimited-rpm
+          path: |
+            dist/*.rpm
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
