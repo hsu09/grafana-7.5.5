@@ -28,6 +28,7 @@ jobs:
     env:
       BUILD_ID: 755${{ github.run_number }}
       GRAFANA_BUILD_CONTAINER: grafana/build-container:1.4.1
+      GO_VERSION: 1.15.15
 
     steps:
       - name: Check out source
@@ -54,6 +55,24 @@ jobs:
               chmod +x bin/grabpl
             '
 
+      - name: Install Go 1.15 toolchain
+        run: |
+          set -euxo pipefail
+
+          docker run --rm \
+            -e GO_VERSION="${GO_VERSION}" \
+            -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
+            -w /go/src/github.com/grafana/grafana \
+            "${GRAFANA_BUILD_CONTAINER}" \
+            bash -lc '
+              set -euxo pipefail
+              rm -rf .tools/go
+              mkdir -p .tools
+              curl -fL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tgz
+              tar -C .tools -xzf /tmp/go.tgz
+              .tools/go/bin/go version
+            '
+
       - name: Install frontend dependencies
         run: |
           set -euxo pipefail
@@ -78,11 +97,14 @@ jobs:
             -e DRONE_BUILD_NUMBER="${BUILD_ID}" \
             -e GITHUB_TOKEN="${{ github.token }}" \
             -e NODE_OPTIONS="--max_old_space_size=4096" \
+            -e GOROOT="/go/src/github.com/grafana/grafana/.tools/go" \
             -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
             -w /go/src/github.com/grafana/grafana \
             "${GRAFANA_BUILD_CONTAINER}" \
             bash -lc '
               set -euxo pipefail
+              export PATH="${GOROOT}/bin:${PATH}"
+              go version
               ./bin/grabpl build-backend --jobs 4 --edition oss --build-id "${DRONE_BUILD_NUMBER}" --variants linux-x64 --no-pull-enterprise
             '
 
@@ -94,11 +116,13 @@ jobs:
             -e DRONE_BUILD_NUMBER="${BUILD_ID}" \
             -e GITHUB_TOKEN="${{ github.token }}" \
             -e NODE_OPTIONS="--max_old_space_size=4096" \
+            -e GOROOT="/go/src/github.com/grafana/grafana/.tools/go" \
             -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
             -w /go/src/github.com/grafana/grafana \
             "${GRAFANA_BUILD_CONTAINER}" \
             bash -lc '
               set -euxo pipefail
+              export PATH="${GOROOT}/bin:${PATH}"
               ./bin/grabpl build-frontend --jobs 4 --edition oss --build-id "${DRONE_BUILD_NUMBER}" --no-install-deps --no-pull-enterprise
             '
 
@@ -126,11 +150,13 @@ jobs:
             -e DRONE_BUILD_NUMBER="${BUILD_ID}" \
             -e GITHUB_TOKEN="${{ github.token }}" \
             -e NODE_OPTIONS="--max_old_space_size=4096" \
+            -e GOROOT="/go/src/github.com/grafana/grafana/.tools/go" \
             -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
             -w /go/src/github.com/grafana/grafana \
             "${GRAFANA_BUILD_CONTAINER}" \
             bash -lc '
               set -euxo pipefail
+              export PATH="${GOROOT}/bin:${PATH}"
               ./bin/grabpl gen-version --build-id "${DRONE_BUILD_NUMBER}"
             '
 
@@ -142,11 +168,13 @@ jobs:
             -e DRONE_BUILD_NUMBER="${BUILD_ID}" \
             -e GITHUB_TOKEN="${{ github.token }}" \
             -e NODE_OPTIONS="--max_old_space_size=4096" \
+            -e GOROOT="/go/src/github.com/grafana/grafana/.tools/go" \
             -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
             -w /go/src/github.com/grafana/grafana \
             "${GRAFANA_BUILD_CONTAINER}" \
             bash -lc '
               set -euxo pipefail
+              export PATH="${GOROOT}/bin:${PATH}"
               . scripts/build/gpg-test-vars.sh
               ./bin/grabpl package --jobs 4 --edition oss --build-id "${DRONE_BUILD_NUMBER}" --no-pull-enterprise --variants linux-x64
 
