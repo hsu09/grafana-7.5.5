@@ -29,6 +29,7 @@ jobs:
       BUILD_ID: 755${{ github.run_number }}
       GRAFANA_BUILD_CONTAINER: grafana/build-container:1.4.1
       GO_VERSION: 1.15.15
+      YARN_CACHE_FOLDER: /go/src/github.com/grafana/grafana/.cache/yarn
 
     steps:
       - name: Check out source
@@ -44,6 +45,7 @@ jobs:
             -e DRONE_BUILD_NUMBER="${BUILD_ID}" \
             -e GITHUB_TOKEN="${{ github.token }}" \
             -e NODE_OPTIONS="--max_old_space_size=4096" \
+            -e YARN_CACHE_FOLDER="${YARN_CACHE_FOLDER}" \
             -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
             -w /go/src/github.com/grafana/grafana \
             "${GRAFANA_BUILD_CONTAINER}" \
@@ -81,12 +83,27 @@ jobs:
             -e DRONE_BUILD_NUMBER="${BUILD_ID}" \
             -e GITHUB_TOKEN="${{ github.token }}" \
             -e NODE_OPTIONS="--max_old_space_size=4096" \
+            -e YARN_CACHE_FOLDER="${YARN_CACHE_FOLDER}" \
             -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
             -w /go/src/github.com/grafana/grafana \
             "${GRAFANA_BUILD_CONTAINER}" \
             bash -lc '
               set -euxo pipefail
-              yarn install --pure-lockfile --no-progress
+              rm -rf "${YARN_CACHE_FOLDER}"
+              mkdir -p "${YARN_CACHE_FOLDER}"
+
+              for attempt in 1 2 3; do
+                if yarn install --pure-lockfile --no-progress --network-timeout 100000 --cache-folder "${YARN_CACHE_FOLDER}"; then
+                  exit 0
+                fi
+
+                echo "yarn install failed on attempt ${attempt}; clearing cache before retry"
+                rm -rf "${YARN_CACHE_FOLDER}"
+                mkdir -p "${YARN_CACHE_FOLDER}"
+                sleep 10
+              done
+
+              exit 1
             '
 
       - name: Build backend
@@ -98,6 +115,7 @@ jobs:
             -e GITHUB_TOKEN="${{ github.token }}" \
             -e NODE_OPTIONS="--max_old_space_size=4096" \
             -e GOROOT="/go/src/github.com/grafana/grafana/.tools/go" \
+            -e YARN_CACHE_FOLDER="${YARN_CACHE_FOLDER}" \
             -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
             -w /go/src/github.com/grafana/grafana \
             "${GRAFANA_BUILD_CONTAINER}" \
