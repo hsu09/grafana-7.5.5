@@ -125,7 +125,7 @@ var NewSqlQueryEndpoint = func(config *SqlQueryEndpointConfiguration, queryResul
 	return &queryEndpoint, nil
 }
 
-const rowLimit = 1000000
+const rowLimit = -1
 
 // Query is the main function for the SqlQueryEndpoint
 func (e *sqlQueryEndpoint) Query(ctx context.Context, dsInfo *models.DataSource, tsdbQuery *tsdb.TsdbQuery) (*tsdb.Response, error) {
@@ -257,7 +257,7 @@ func (e *sqlQueryEndpoint) transformToTable(query *tsdb.Query, rows *core.Rows, 
 	}
 
 	for ; rows.Next(); rowCount++ {
-		if rowCount > rowLimit {
+		if rowLimit >= 0 && rowCount > rowLimit {
 			return fmt.Errorf("query row limit exceeded, limit %d", rowLimit)
 		}
 
@@ -422,7 +422,7 @@ func (e *sqlQueryEndpoint) processRow(cfg *processCfg) error {
 	var value null.Float
 	var metric string
 
-	if cfg.rowCount > rowLimit {
+	if rowLimit >= 0 && cfg.rowCount > rowLimit {
 		return fmt.Errorf("query row limit exceeded, limit %d", rowLimit)
 	}
 
