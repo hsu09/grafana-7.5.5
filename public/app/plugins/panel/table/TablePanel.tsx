@@ -3,7 +3,6 @@ import React, { Component } from 'react';
 import { Button, Select, Table } from '@grafana/ui';
 import {
   AppEvents,
-  ArrayVector,
   DataFrame,
   FieldMatcherID,
   getFieldDisplayName,
@@ -39,7 +38,7 @@ interface TableExportDatasource {
   };
 }
 
-const TABLE_PREVIEW_ROW_LIMIT = 20000;
+const TABLE_PREVIEW_ROW_LIMIT = 1000000;
 const SERVER_EXPORT_ROW_THRESHOLD = 100000;
 
 export class TablePanel extends Component<Props, State> {
@@ -47,8 +46,6 @@ export class TablePanel extends Component<Props, State> {
     exporting: false,
     exportStatus: '',
   };
-
-  private previewFrames = new WeakMap<DataFrame, DataFrame>();
 
   onColumnResize = (fieldDisplayName: string, width: number) => {
     const { fieldConfig } = this.props;
@@ -184,34 +181,6 @@ export class TablePanel extends Component<Props, State> {
     return true;
   };
 
-  getPreviewFrame(frame: DataFrame): DataFrame {
-    if (frame.length <= TABLE_PREVIEW_ROW_LIMIT) {
-      return frame;
-    }
-
-    const cached = this.previewFrames.get(frame);
-    if (cached) {
-      return cached;
-    }
-
-    const preview: DataFrame = {
-      ...frame,
-      length: TABLE_PREVIEW_ROW_LIMIT,
-      fields: frame.fields.map((field) => {
-        const values = new Array(TABLE_PREVIEW_ROW_LIMIT);
-        for (let index = 0; index < TABLE_PREVIEW_ROW_LIMIT; index++) {
-          values[index] = field.values.get(index);
-        }
-        return {
-          ...field,
-          values: new ArrayVector(values),
-        };
-      }),
-    };
-    this.previewFrames.set(frame, preview);
-    return preview;
-  }
-
   renderTable(frame: DataFrame, width: number, height: number) {
     const { options } = this.props;
 
@@ -220,6 +189,7 @@ export class TablePanel extends Component<Props, State> {
         height={height}
         width={width}
         data={frame}
+        maxRows={TABLE_PREVIEW_ROW_LIMIT}
         noHeader={!options.showHeader}
         resizable={true}
         initialSortBy={options.sortBy}
@@ -237,14 +207,14 @@ export class TablePanel extends Component<Props, State> {
   }
 
   renderToolbar(frame: DataFrame, selector?: React.ReactNode) {
-    const previewed = frame.length > TABLE_PREVIEW_ROW_LIMIT;
+    const reachedPreviewLimit = frame.length >= TABLE_PREVIEW_ROW_LIMIT;
+    const displayedRows = Math.min(frame.length, TABLE_PREVIEW_ROW_LIMIT);
     return (
       <div className={tableStyles.toolbar}>
         {selector}
-        {previewed && (
+        {reachedPreviewLimit && (
           <div className={tableStyles.previewInfo}>
-            Showing {TABLE_PREVIEW_ROW_LIMIT.toLocaleString()} of {frame.length.toLocaleString()} rows; export includes
-            all
+            Showing {displayedRows.toLocaleString()} of {frame.length.toLocaleString()} rows; export includes all
           </div>
         )}
         <Button
@@ -292,7 +262,7 @@ export class TablePanel extends Component<Props, State> {
               <Select options={names} value={names[currentIndex]} onChange={this.onChangeTableSelection} />
             </div>
           )}
-          {this.renderTable(this.getPreviewFrame(currentFrame), width, height - toolbarHeight)}
+          {this.renderTable(currentFrame, width, height - toolbarHeight)}
         </div>
       );
     }
@@ -301,7 +271,7 @@ export class TablePanel extends Component<Props, State> {
     return (
       <div className={tableStyles.wrapper}>
         {this.renderToolbar(currentFrame)}
-        {this.renderTable(this.getPreviewFrame(currentFrame), width, height - toolbarHeight)}
+        {this.renderTable(currentFrame, width, height - toolbarHeight)}
       </div>
     );
   }

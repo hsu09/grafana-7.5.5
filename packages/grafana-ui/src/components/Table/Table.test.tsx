@@ -133,6 +133,16 @@ describe('Table', () => {
       expect(within(rows[2]).getByRole('cell', { name: '11' }).closest('a')).toHaveAttribute('href', '11');
       expect(within(rows[3]).getByRole('cell', { name: '12' }).closest('a')).toHaveAttribute('href', '12');
     });
+
+    it('then maxRows limits materialized rows without slicing the data frame', () => {
+      getTestContext({ maxRows: 2 });
+
+      const rows = within(getTable()).getAllByRole('row');
+      expect(rows).toHaveLength(3);
+      expect(within(rows[1]).getByRole('cell', { name: '10' })).toBeInTheDocument();
+      expect(within(rows[2]).getByRole('cell', { name: '11' })).toBeInTheDocument();
+      expect(screen.queryByRole('cell', { name: '12' })).not.toBeInTheDocument();
+    });
   });
 
   describe('when sorting with columnheader', () => {

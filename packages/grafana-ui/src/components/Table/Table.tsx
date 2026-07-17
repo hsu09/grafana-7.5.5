@@ -35,6 +35,8 @@ export interface Props {
   data: DataFrame;
   width: number;
   height: number;
+  /** Maximum number of rows that react-table should materialize for display. */
+  maxRows?: number;
   /** Minimal column width specified in pixels */
   columnMinWidth?: number;
   noHeader?: boolean;
@@ -116,6 +118,7 @@ export const Table: FC<Props> = memo((props: Props) => {
     ariaLabel,
     data,
     height,
+    maxRows,
     onCellFilterAdded,
     width,
     columnMinWidth = COLUMN_MIN_WIDTH,
@@ -135,8 +138,9 @@ export const Table: FC<Props> = memo((props: Props) => {
     // as we only use this to fake the length of our data set for react-table we need to make sure we always return an array
     // filled with values at each index otherwise we'll end up trying to call accessRow for null|undefined value in
     // https://github.com/tannerlinsley/react-table/blob/7be2fc9d8b5e223fc998af88865ae86a88792fdb/src/hooks/useTable.js#L585
-    return Array(data.length).fill(0);
-  }, [data]);
+    const rowCount = maxRows === undefined ? data.length : Math.min(data.length, Math.max(0, maxRows));
+    return Array(rowCount).fill(0);
+  }, [data, maxRows]);
 
   // React-table column definitions
   const memoizedColumns = useMemo(() => getColumns(data, width, columnMinWidth), [data, width, columnMinWidth]);
