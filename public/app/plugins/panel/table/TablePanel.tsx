@@ -137,12 +137,7 @@ export class TablePanel extends Component<Props> {
             <div className={tableStyles.selectWrapper}>
               <Select options={names} value={names[currentIndex]} onChange={this.onChangeTableSelection} />
             </div>
-            <Button
-              icon="download-alt"
-              size="sm"
-              variant="secondary"
-              onClick={() => this.onExportExcel(currentFrame)}
-            >
+            <Button icon="download-alt" size="sm" variant="secondary" onClick={() => this.onExportExcel(currentFrame)}>
               Export Excel
             </Button>
           </div>
@@ -155,12 +150,7 @@ export class TablePanel extends Component<Props> {
       <div className={tableStyles.wrapper}>
         {this.renderTable(currentFrame, width, height - toolbarHeight)}
         <div className={tableStyles.toolbar}>
-          <Button
-            icon="download-alt"
-            size="sm"
-            variant="secondary"
-            onClick={() => this.onExportExcel(currentFrame)}
-          >
+          <Button icon="download-alt" size="sm" variant="secondary" onClick={() => this.onExportExcel(currentFrame)}>
             Export Excel
           </Button>
         </div>
