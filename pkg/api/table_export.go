@@ -25,6 +25,10 @@ import (
 const (
 	excelMaxDataRowsPerSheet = 1048575
 	excelMaxCellRunes        = 32767
+	excelColumnWidthSamples  = 500
+	excelBodyCellStyle       = 0
+	excelHeaderCellStyle     = 1
+	excelOneDecimalCellStyle = 2
 )
 
 type tableExportColumn struct {
@@ -430,7 +434,7 @@ func writeWorkbookStaticFiles(zipWriter *zip.Writer, sheets []tableExportSheet) 
 	}
 
 	return writeZipText(zipWriter, "xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><color rgb="FF000000"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FF000000"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`)
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="0.0"/></numFmts><fonts count="2"><font><sz val="12"/><color rgb="FF000000"/><name val="宋体"/></font><font><b/><sz val="12"/><color rgb="FF000000"/><name val="宋体"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyFont="1" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`)
 }
 
 func writeZipText(zipWriter *zip.Writer, name, value string) error {
@@ -457,13 +461,7 @@ func writeWorksheet(writer io.Writer, sheet tableExportSheet) error {
 		return err
 	}
 	for index, name := range sheet.data.columns {
-		width := len([]rune(name)) + 2
-		if width < 12 {
-			width = 12
-		}
-		if width > 60 {
-			width = 60
-		}
+		width := tableExportColumnWidth(sheet, index, name)
 		if _, err := fmt.Fprintf(writer, `<col min="%d" max="%d" width="%d" customWidth="1"/>`, index+1, index+1, width); err != nil {
 			return err
 		}
@@ -472,7 +470,7 @@ func writeWorksheet(writer io.Writer, sheet tableExportSheet) error {
 		return err
 	}
 	for column, name := range sheet.data.columns {
-		if err := writeInlineStringCell(writer, excelColumnName(column)+"1", name, 1); err != nil {
+		if err := writeInlineStringCell(writer, excelColumnName(column)+"1", name, excelHeaderCellStyle); err != nil {
 			return err
 		}
 	}
@@ -486,7 +484,8 @@ func writeWorksheet(writer io.Writer, sheet tableExportSheet) error {
 			return err
 		}
 		for column := range sheet.data.columns {
-			if err := writeTableExportCell(writer, excelColumnName(column)+strconv.Itoa(excelRow), sheet.data.cellValue(sourceRow, column)); err != nil {
+			style := tableExportCellStyle(sheet.data.columns[column])
+			if err := writeTableExportCell(writer, excelColumnName(column)+strconv.Itoa(excelRow), sheet.data.cellValue(sourceRow, column), style); err != nil {
 				return err
 			}
 		}
@@ -501,11 +500,61 @@ func writeWorksheet(writer io.Writer, sheet tableExportSheet) error {
 	return nil
 }
 
-func writeTableExportCell(writer io.Writer, reference string, value interface{}) error {
+func tableExportCellStyle(columnName string) int {
+	name := strings.ToLower(strings.Join(strings.Fields(columnName), ""))
+	if strings.Contains(name, "指定内存") || strings.Contains(name, "requestedmemory") || strings.Contains(name, "specifiedmemory") {
+		return excelOneDecimalCellStyle
+	}
+	return excelBodyCellStyle
+}
+
+func tableExportColumnWidth(sheet tableExportSheet, column int, name string) int {
+	width := len([]rune(name))
+	end := sheet.rowEnd
+	if end > sheet.rowStart+excelColumnWidthSamples {
+		end = sheet.rowStart + excelColumnWidthSamples
+	}
+	style := tableExportCellStyle(name)
+	for row := sheet.rowStart; row < end; row++ {
+		value := tableExportCellText(sheet.data.cellValue(row, column), style)
+		if valueWidth := len([]rune(value)); valueWidth > width {
+			width = valueWidth
+		}
+	}
+	width += 2
+	if width < 12 {
+		return 12
+	}
+	if width > 60 {
+		return 60
+	}
+	return width
+}
+
+func tableExportCellText(value interface{}, style int) string {
+	value = dereferenceTableExportValue(value)
+	if value == nil {
+		return ""
+	}
+	if style == excelOneDecimalCellStyle {
+		if formatted, ok := formatOneDecimalValue(value); ok {
+			return formatted
+		}
+	}
+	switch typed := value.(type) {
+	case time.Time:
+		return typed.Format(time.RFC3339Nano)
+	case []byte:
+		return string(typed)
+	default:
+		return fmt.Sprint(value)
+	}
+}
+
+func dereferenceTableExportValue(value interface{}) interface{} {
 	if value == nil {
 		return nil
 	}
-
 	reflected := reflect.ValueOf(value)
 	for reflected.IsValid() && (reflected.Kind() == reflect.Ptr || reflected.Kind() == reflect.Interface) {
 		if reflected.IsNil() {
@@ -516,18 +565,77 @@ func writeTableExportCell(writer io.Writer, reference string, value interface{})
 	if !reflected.IsValid() {
 		return nil
 	}
-	value = reflected.Interface()
+	return reflected.Interface()
+}
+
+func formatOneDecimalValue(value interface{}) (string, bool) {
+	var numericValue float64
+	switch typed := value.(type) {
+	case json.Number:
+		parsed, err := typed.Float64()
+		if err != nil {
+			return "", false
+		}
+		numericValue = parsed
+	case []byte:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(string(typed)), 64)
+		if err != nil {
+			return "", false
+		}
+		numericValue = parsed
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		if err != nil {
+			return "", false
+		}
+		numericValue = parsed
+	default:
+		reflected := reflect.ValueOf(value)
+		switch reflected.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			numericValue = float64(reflected.Int())
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			numericValue = float64(reflected.Uint())
+		case reflect.Float32, reflect.Float64:
+			numericValue = reflected.Float()
+		default:
+			return "", false
+		}
+	}
+	if math.IsNaN(numericValue) || math.IsInf(numericValue, 0) {
+		return "", false
+	}
+	return strconv.FormatFloat(numericValue, 'f', 1, 64), true
+}
+
+func writeTableExportCell(writer io.Writer, reference string, value interface{}, style int) error {
+	if value == nil {
+		return nil
+	}
+
+	value = dereferenceTableExportValue(value)
+	if value == nil {
+		return nil
+	}
+	reflected := reflect.ValueOf(value)
+
+	if style == excelOneDecimalCellStyle {
+		if formatted, ok := formatOneDecimalValue(value); ok {
+			_, err := fmt.Fprintf(writer, `<c r="%s" s="%d"><v>%s</v></c>`, reference, style, formatted)
+			return err
+		}
+	}
 
 	switch typed := value.(type) {
 	case time.Time:
-		return writeInlineStringCell(writer, reference, typed.Format(time.RFC3339Nano), 0)
+		return writeInlineStringCell(writer, reference, typed.Format(time.RFC3339Nano), style)
 	case json.Number:
-		if _, err := fmt.Fprintf(writer, `<c r="%s" s="0"><v>%s</v></c>`, reference, typed.String()); err != nil {
+		if _, err := fmt.Fprintf(writer, `<c r="%s" s="%d"><v>%s</v></c>`, reference, style, typed.String()); err != nil {
 			return err
 		}
 		return nil
 	case []byte:
-		return writeInlineStringCell(writer, reference, string(typed), 0)
+		return writeInlineStringCell(writer, reference, string(typed), style)
 	}
 
 	switch reflected.Kind() {
@@ -536,23 +644,23 @@ func writeTableExportCell(writer io.Writer, reference string, value interface{})
 		if reflected.Bool() {
 			value = 1
 		}
-		_, err := fmt.Fprintf(writer, `<c r="%s" s="0" t="b"><v>%d</v></c>`, reference, value)
+		_, err := fmt.Fprintf(writer, `<c r="%s" s="%d" t="b"><v>%d</v></c>`, reference, style, value)
 		return err
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		_, err := fmt.Fprintf(writer, `<c r="%s" s="0"><v>%d</v></c>`, reference, reflected.Int())
+		_, err := fmt.Fprintf(writer, `<c r="%s" s="%d"><v>%d</v></c>`, reference, style, reflected.Int())
 		return err
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		_, err := fmt.Fprintf(writer, `<c r="%s" s="0"><v>%d</v></c>`, reference, reflected.Uint())
+		_, err := fmt.Fprintf(writer, `<c r="%s" s="%d"><v>%d</v></c>`, reference, style, reflected.Uint())
 		return err
 	case reflect.Float32, reflect.Float64:
 		value := reflected.Float()
 		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return writeInlineStringCell(writer, reference, fmt.Sprint(value), 0)
+			return writeInlineStringCell(writer, reference, fmt.Sprint(value), style)
 		}
-		_, err := fmt.Fprintf(writer, `<c r="%s" s="0"><v>%s</v></c>`, reference, strconv.FormatFloat(value, 'g', -1, 64))
+		_, err := fmt.Fprintf(writer, `<c r="%s" s="%d"><v>%s</v></c>`, reference, style, strconv.FormatFloat(value, 'g', -1, 64))
 		return err
 	default:
-		return writeInlineStringCell(writer, reference, fmt.Sprint(value), 0)
+		return writeInlineStringCell(writer, reference, fmt.Sprint(value), style)
 	}
 }
 

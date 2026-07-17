@@ -1,6 +1,6 @@
 import { DataFrame, Field, formattedValueToString, getFieldDisplayName } from '@grafana/data';
 import { TableFieldOptions, TableSortByFieldState } from '@grafana/ui/src/components/Table/types';
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 
 const DEFAULT_FILE_NAME = 'grafana-table';
 const DEFAULT_SHEET_NAME = 'Table';
@@ -10,19 +10,25 @@ const COLUMN_WIDTH_SAMPLE_ROWS = 500;
 
 type StyledCell = XLSX.CellObject & {
   s?: {
-    font: { bold: boolean; color: { rgb: string } };
+    font: { name: string; sz: number; bold: boolean; color: { rgb: string } };
     alignment: { horizontal: string; vertical: string };
+    numFmt?: string;
   };
 };
 
 const BODY_CELL_STYLE = {
-  font: { bold: false, color: { rgb: '000000' } },
+  font: { name: '宋体', sz: 12, bold: false, color: { rgb: '000000' } },
   alignment: { horizontal: 'center', vertical: 'center' },
 };
 
 const HEADER_CELL_STYLE = {
-  font: { bold: true, color: { rgb: '000000' } },
+  font: { name: '宋体', sz: 12, bold: true, color: { rgb: '000000' } },
   alignment: { horizontal: 'center', vertical: 'center' },
+};
+
+const ONE_DECIMAL_MEMORY_CELL_STYLE = {
+  ...BODY_CELL_STYLE,
+  numFmt: '0.0',
 };
 
 export type ExcelExportProgress = (completedRows: number, totalRows: number) => void;
@@ -87,11 +93,27 @@ function getSortedRowIndexes(frame: DataFrame, fields: Field[], sortBy: TableSor
   });
 }
 
-function getCellValue(field: Field, rowIndex: number): string | number | boolean {
+function isSpecifiedMemoryField(field: Field, frame: DataFrame): boolean {
+  const displayName = getFieldDisplayName(field, frame).replace(/\s/g, '').toLowerCase();
+  return (
+    displayName.includes('指定内存') ||
+    displayName.includes('requestedmemory') ||
+    displayName.includes('specifiedmemory')
+  );
+}
+
+function getCellValue(field: Field, rowIndex: number, frame: DataFrame): string | number | boolean {
   const value = field.values.get(rowIndex);
 
   if (value === null || value === undefined) {
     return '';
+  }
+
+  if (isSpecifiedMemoryField(field, frame)) {
+    const numericValue = typeof value === 'number' ? value : Number(value);
+    if (Number.isFinite(numericValue)) {
+      return Math.round((numericValue + Number.EPSILON) * 10) / 10;
+    }
   }
 
   if (field.display) {
@@ -129,7 +151,7 @@ function getColumnWidths(frame: DataFrame, fields: Field[]): Array<{ wch: number
     let width = getFieldDisplayName(field, frame).length;
     const sampleCount = Math.min(frame.length, COLUMN_WIDTH_SAMPLE_ROWS);
     for (let rowIndex = 0; rowIndex < sampleCount; rowIndex++) {
-      width = Math.max(width, String(getCellValue(field, rowIndex)).length);
+      width = Math.max(width, String(getCellValue(field, rowIndex, frame)).length);
     }
     return { wch: Math.max(12, Math.min(width + 2, 60)) };
   });
@@ -139,7 +161,7 @@ function yieldToBrowser(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function applyWorksheetStyles(worksheet: XLSX.WorkSheet): void {
+function applyWorksheetStyles(worksheet: XLSX.WorkSheet, frame: DataFrame, fields: Field[]): void {
   if (!worksheet['!ref']) {
     return;
   }
@@ -149,7 +171,12 @@ function applyWorksheetStyles(worksheet: XLSX.WorkSheet): void {
     for (let column = range.s.c; column <= range.e.c; column++) {
       const cell = worksheet[XLSX.utils.encode_cell({ r: row, c: column })] as StyledCell | undefined;
       if (cell) {
-        cell.s = row === 0 ? HEADER_CELL_STYLE : BODY_CELL_STYLE;
+        cell.s =
+          row === 0
+            ? HEADER_CELL_STYLE
+            : isSpecifiedMemoryField(fields[column], frame)
+            ? ONE_DECIMAL_MEMORY_CELL_STYLE
+            : BODY_CELL_STYLE;
       }
     }
   }
@@ -182,7 +209,7 @@ export async function exportDataFrameToExcel(
       const rows: Array<Array<string | number | boolean>> = [];
       for (let rowPosition = chunkStart; rowPosition < chunkEnd; rowPosition++) {
         const rowIndex = rowIndexes ? rowIndexes[rowPosition] : rowPosition;
-        rows.push(fields.map((field) => getCellValue(field, rowIndex)));
+        rows.push(fields.map((field) => getCellValue(field, rowIndex, frame)));
       }
       XLSX.utils.sheet_add_aoa(worksheet, rows, { origin: -1 });
       completedRows += rows.length;
@@ -191,7 +218,7 @@ export async function exportDataFrameToExcel(
     }
 
     worksheet['!cols'] = columnWidths;
-    applyWorksheetStyles(worksheet);
+    applyWorksheetStyles(worksheet, frame, fields);
     worksheet['!autofilter'] = {
       ref: XLSX.utils.encode_range({
         s: { c: 0, r: 0 },

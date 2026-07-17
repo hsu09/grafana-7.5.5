@@ -32,12 +32,12 @@ func TestSplitTableExportSheets(t *testing.T) {
 
 func TestWriteTableExportWorkbook(t *testing.T) {
 	rows := [][]interface{}{
-		{"cnshalinhpc01", 12.5, true},
-		{"cnshalinhpc02", nil, false},
+		{"cnshalinhpc01", 12.5, true, 9.765625},
+		{"cnshalinhpc02", nil, false, 140},
 	}
 	data := tableExportData{
 		name:     "A",
-		columns:  []string{"主机名", "CPU利用率", "在线"},
+		columns:  []string{"主机名", "CPU利用率", "在线", "指定内存(G)"},
 		rowCount: len(rows),
 		cellValue: func(row, column int) interface{} {
 			return rows[row][column]
@@ -66,6 +66,9 @@ func TestWriteTableExportWorkbook(t *testing.T) {
 	require.Contains(t, files, "xl/worksheets/sheet1.xml")
 	require.Contains(t, files["xl/styles.xml"], `<fonts count="2">`)
 	require.Contains(t, files["xl/styles.xml"], `<b/>`)
+	require.Contains(t, files["xl/styles.xml"], `<sz val="12"/>`)
+	require.Contains(t, files["xl/styles.xml"], `<name val="宋体"/>`)
+	require.Contains(t, files["xl/styles.xml"], `formatCode="0.0"`)
 	require.Contains(t, files["xl/styles.xml"], `<alignment horizontal="center" vertical="center"/>`)
 	require.Contains(t, files["xl/workbook.xml"], `name="资源表"`)
 	require.Contains(t, files["xl/worksheets/sheet1.xml"], "主机名")
@@ -74,4 +77,7 @@ func TestWriteTableExportWorkbook(t *testing.T) {
 	require.Contains(t, files["xl/worksheets/sheet1.xml"], `r="A2" s="0"`)
 	require.Contains(t, files["xl/worksheets/sheet1.xml"], `s="0"><v>12.5</v>`)
 	require.Contains(t, files["xl/worksheets/sheet1.xml"], `s="0" t="b"><v>1</v>`)
+	require.Contains(t, files["xl/worksheets/sheet1.xml"], `r="D1" s="1"`)
+	require.Contains(t, files["xl/worksheets/sheet1.xml"], `r="D2" s="2"><v>9.8</v>`)
+	require.Contains(t, files["xl/worksheets/sheet1.xml"], `r="D3" s="2"><v>140.0</v>`)
 }

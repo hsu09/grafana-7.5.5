@@ -233,9 +233,7 @@ export class TablePanel extends Component<Props, State> {
       return <div>No data</div>;
     }
 
-    const inputHeight = config.theme.spacing.formInputHeight;
-    const padding = 8 * 2;
-    const toolbarHeight = inputHeight + padding;
+    const toolbarHeight = Math.max(0, config.theme.spacing.formInputHeight - config.theme.panelHeaderHeight);
 
     if (count > 1) {
       const currentIndex = this.getCurrentFrameIndex();
@@ -281,8 +279,16 @@ const tableStyles = {
     align-items: center;
     justify-content: flex-end;
     gap: 8px;
-    padding: 8px;
-    min-height: 48px;
+    padding: 0 8px;
+    min-height: ${config.theme.spacing.formInputHeight}px;
+    margin-top: -${config.theme.panelHeaderHeight}px;
+    position: relative;
+    z-index: 12;
+    pointer-events: none;
+
+    button {
+      pointer-events: auto;
+    }
   `,
   previewInfo: css`
     flex: 1;
@@ -296,6 +302,7 @@ const tableStyles = {
   selectWrapper: css`
     flex: 1;
     min-width: 0;
+    pointer-events: auto;
   `,
 };
 
