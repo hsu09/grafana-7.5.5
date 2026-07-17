@@ -310,3 +310,11 @@ func TestSqlEngine(t *testing.T) {
 		}
 	})
 }
+
+func TestTableQueryRowLimit(t *testing.T) {
+	query := &tsdb.Query{Model: simplejson.New()}
+	require.Equal(t, tablePreviewRowLimit, getTableQueryRowLimit(query))
+
+	query.Model.Set(FullTableExportQueryFlag, true)
+	require.Equal(t, -1, getTableQueryRowLimit(query))
+}

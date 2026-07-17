@@ -38,7 +38,7 @@ interface TableExportDatasource {
   };
 }
 
-const TABLE_PREVIEW_ROW_LIMIT = 1000000;
+const TABLE_PREVIEW_ROW_LIMIT = 500000;
 
 export class TablePanel extends Component<Props, State> {
   state: State = {
@@ -217,7 +217,7 @@ export class TablePanel extends Component<Props, State> {
           disabled={this.state.exporting}
           onClick={() => this.onExportExcel(frame)}
         >
-          {this.state.exportStatus || 'Export Excel'}
+          {this.state.exportStatus || 'Export'}
         </Button>
       </div>
     );
@@ -279,7 +279,7 @@ const tableStyles = {
     align-items: center;
     justify-content: flex-end;
     gap: 8px;
-    padding: 0 8px;
+    padding: 0 40px 0 8px;
     min-height: ${config.theme.spacing.formInputHeight}px;
     margin-top: -${config.theme.panelHeaderHeight}px;
     position: relative;

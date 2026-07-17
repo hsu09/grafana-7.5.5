@@ -219,12 +219,6 @@ export async function exportDataFrameToExcel(
 
     worksheet['!cols'] = columnWidths;
     applyWorksheetStyles(worksheet, frame, fields);
-    worksheet['!autofilter'] = {
-      ref: XLSX.utils.encode_range({
-        s: { c: 0, r: 0 },
-        e: { c: fields.length - 1, r: partEnd - partStart },
-      }),
-    };
     XLSX.utils.book_append_sheet(workbook, worksheet, sanitizeSheetName(panelTitle, part, partCount));
   }
 

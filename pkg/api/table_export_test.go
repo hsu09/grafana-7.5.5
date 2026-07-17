@@ -80,4 +80,5 @@ func TestWriteTableExportWorkbook(t *testing.T) {
 	require.Contains(t, files["xl/worksheets/sheet1.xml"], `r="D1" s="1"`)
 	require.Contains(t, files["xl/worksheets/sheet1.xml"], `r="D2" s="2"><v>9.8</v>`)
 	require.Contains(t, files["xl/worksheets/sheet1.xml"], `r="D3" s="2"><v>140.0</v>`)
+	require.NotContains(t, files["xl/worksheets/sheet1.xml"], `<autoFilter`)
 }

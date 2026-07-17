@@ -20,6 +20,7 @@ import (
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	"github.com/grafana/grafana/pkg/models"
 	"github.com/grafana/grafana/pkg/tsdb"
+	"github.com/grafana/grafana/pkg/tsdb/sqleng"
 )
 
 const (
@@ -101,6 +102,7 @@ func (hs *HTTPServer) QueryTableExcel(c *models.ReqContext, reqDTO tableExportRe
 
 	var ds *models.DataSource
 	for i, query := range reqDTO.Queries {
+		query.Set(sqleng.FullTableExportQueryFlag, true)
 		datasourceID, err := query.Get("datasourceId").Int64()
 		if err != nil {
 			return response.Error(http.StatusBadRequest, "Export query missing data source ID", nil)
@@ -494,7 +496,7 @@ func writeWorksheet(writer io.Writer, sheet tableExportSheet) error {
 		}
 	}
 
-	if _, err := fmt.Fprintf(writer, `</sheetData><autoFilter ref="A1:%s%d"/></worksheet>`, lastColumn, lastRow); err != nil {
+	if _, err := io.WriteString(writer, `</sheetData></worksheet>`); err != nil {
 		return err
 	}
 	return nil

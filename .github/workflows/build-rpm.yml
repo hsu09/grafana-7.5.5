@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - fix_v6
+      - fix_v7
     paths:
       - '.github/workflows/build-rpm.yml'
       - 'pkg/tsdb/sqleng/**'
@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   build-rpm:
-    name: Build Grafana 7.5.5 styled-table XLSX linux x64 RPM
+    name: Build Grafana 7.5.5 capped-preview XLSX linux x64 RPM
     runs-on: ubuntu-22.04
     timeout-minutes: 180
 
@@ -145,6 +145,7 @@ jobs:
               set -euxo pipefail
               export PATH="${GOROOT}/bin:${PATH}"
               go test ./pkg/api -run "Test(SplitTableExportSheets|WriteTableExportWorkbook)$" -count=1
+              go test ./pkg/tsdb/sqleng -run "TestTableQueryRowLimit$" -count=1
             '
 
       - name: Build frontend
@@ -223,7 +224,7 @@ jobs:
       - name: Upload RPM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: grafana-7.5.5-fix-v6-styled-table-xlsx-rpm
+          name: grafana-7.5.5-fix-v7-capped-preview-xlsx-rpm
           path: |
             dist/*.rpm
             dist/*.sha256

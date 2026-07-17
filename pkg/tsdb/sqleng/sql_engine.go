@@ -125,7 +125,17 @@ var NewSqlQueryEndpoint = func(config *SqlQueryEndpointConfiguration, queryResul
 	return &queryEndpoint, nil
 }
 
-const rowLimit = -1
+const tablePreviewRowLimit = 500000
+
+// FullTableExportQueryFlag lets the server-side XLSX endpoint bypass the dashboard preview limit.
+const FullTableExportQueryFlag = "fullTableExport"
+
+func getTableQueryRowLimit(query *tsdb.Query) int {
+	if query.Model.Get(FullTableExportQueryFlag).MustBool(false) {
+		return -1
+	}
+	return tablePreviewRowLimit
+}
 
 // Query is the main function for the SqlQueryEndpoint
 func (e *sqlQueryEndpoint) Query(ctx context.Context, dsInfo *models.DataSource, tsdbQuery *tsdb.TsdbQuery) (*tsdb.Response, error) {
@@ -256,9 +266,12 @@ func (e *sqlQueryEndpoint) transformToTable(query *tsdb.Query, rows *core.Rows, 
 		return err
 	}
 
-	for ; rows.Next(); rowCount++ {
-		if rowLimit >= 0 && rowCount > rowLimit {
-			return fmt.Errorf("query row limit exceeded, limit %d", rowLimit)
+	rowLimit := getTableQueryRowLimit(query)
+	for rows.Next() {
+		if rowLimit >= 0 && rowCount >= rowLimit {
+			result.Meta.Set("rowLimit", rowLimit)
+			result.Meta.Set("rowLimitReached", true)
+			break
 		}
 
 		values, err := e.queryResultTransformer.TransformQueryResult(columnTypes, rows)
@@ -272,6 +285,7 @@ func (e *sqlQueryEndpoint) transformToTable(query *tsdb.Query, rows *core.Rows, 
 		ConvertSqlTimeColumnToEpochMs(values, timeIndex)
 		ConvertSqlTimeColumnToEpochMs(values, timeEndIndex)
 		table.Rows = append(table.Rows, values)
+		rowCount++
 	}
 
 	result.Tables = append(result.Tables, table)
@@ -421,10 +435,6 @@ func (e *sqlQueryEndpoint) processRow(cfg *processCfg) error {
 	var timestamp float64
 	var value null.Float
 	var metric string
-
-	if rowLimit >= 0 && cfg.rowCount > rowLimit {
-		return fmt.Errorf("query row limit exceeded, limit %d", rowLimit)
-	}
 
 	values, err := e.queryResultTransformer.TransformQueryResult(cfg.columnTypes, cfg.rows)
 	if err != nil {
