@@ -430,7 +430,7 @@ func writeWorkbookStaticFiles(zipWriter *zip.Writer, sheets []tableExportSheet) 
 	}
 
 	return writeZipText(zipWriter, "xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`)
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><color rgb="FF000000"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FF000000"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`)
 }
 
 func writeZipText(zipWriter *zip.Writer, name, value string) error {
@@ -472,7 +472,7 @@ func writeWorksheet(writer io.Writer, sheet tableExportSheet) error {
 		return err
 	}
 	for column, name := range sheet.data.columns {
-		if err := writeInlineStringCell(writer, excelColumnName(column)+"1", name); err != nil {
+		if err := writeInlineStringCell(writer, excelColumnName(column)+"1", name, 1); err != nil {
 			return err
 		}
 	}
@@ -520,14 +520,14 @@ func writeTableExportCell(writer io.Writer, reference string, value interface{})
 
 	switch typed := value.(type) {
 	case time.Time:
-		return writeInlineStringCell(writer, reference, typed.Format(time.RFC3339Nano))
+		return writeInlineStringCell(writer, reference, typed.Format(time.RFC3339Nano), 0)
 	case json.Number:
-		if _, err := fmt.Fprintf(writer, `<c r="%s"><v>%s</v></c>`, reference, typed.String()); err != nil {
+		if _, err := fmt.Fprintf(writer, `<c r="%s" s="0"><v>%s</v></c>`, reference, typed.String()); err != nil {
 			return err
 		}
 		return nil
 	case []byte:
-		return writeInlineStringCell(writer, reference, string(typed))
+		return writeInlineStringCell(writer, reference, string(typed), 0)
 	}
 
 	switch reflected.Kind() {
@@ -536,29 +536,29 @@ func writeTableExportCell(writer io.Writer, reference string, value interface{})
 		if reflected.Bool() {
 			value = 1
 		}
-		_, err := fmt.Fprintf(writer, `<c r="%s" t="b"><v>%d</v></c>`, reference, value)
+		_, err := fmt.Fprintf(writer, `<c r="%s" s="0" t="b"><v>%d</v></c>`, reference, value)
 		return err
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		_, err := fmt.Fprintf(writer, `<c r="%s"><v>%d</v></c>`, reference, reflected.Int())
+		_, err := fmt.Fprintf(writer, `<c r="%s" s="0"><v>%d</v></c>`, reference, reflected.Int())
 		return err
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		_, err := fmt.Fprintf(writer, `<c r="%s"><v>%d</v></c>`, reference, reflected.Uint())
+		_, err := fmt.Fprintf(writer, `<c r="%s" s="0"><v>%d</v></c>`, reference, reflected.Uint())
 		return err
 	case reflect.Float32, reflect.Float64:
 		value := reflected.Float()
 		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return writeInlineStringCell(writer, reference, fmt.Sprint(value))
+			return writeInlineStringCell(writer, reference, fmt.Sprint(value), 0)
 		}
-		_, err := fmt.Fprintf(writer, `<c r="%s"><v>%s</v></c>`, reference, strconv.FormatFloat(value, 'g', -1, 64))
+		_, err := fmt.Fprintf(writer, `<c r="%s" s="0"><v>%s</v></c>`, reference, strconv.FormatFloat(value, 'g', -1, 64))
 		return err
 	default:
-		return writeInlineStringCell(writer, reference, fmt.Sprint(value))
+		return writeInlineStringCell(writer, reference, fmt.Sprint(value), 0)
 	}
 }
 
-func writeInlineStringCell(writer io.Writer, reference, value string) error {
+func writeInlineStringCell(writer io.Writer, reference, value string, style int) error {
 	value = sanitizeXMLText(truncateRunes(value, excelMaxCellRunes))
-	if _, err := fmt.Fprintf(writer, `<c r="%s" t="inlineStr"><is><t xml:space="preserve">`, reference); err != nil {
+	if _, err := fmt.Fprintf(writer, `<c r="%s" s="%d" t="inlineStr"><is><t xml:space="preserve">`, reference, style); err != nil {
 		return err
 	}
 	if err := xml.EscapeText(writer, []byte(value)); err != nil {

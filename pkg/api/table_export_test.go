@@ -62,10 +62,16 @@ func TestWriteTableExportWorkbook(t *testing.T) {
 
 	require.Contains(t, files, "[Content_Types].xml")
 	require.Contains(t, files, "xl/workbook.xml")
+	require.Contains(t, files, "xl/styles.xml")
 	require.Contains(t, files, "xl/worksheets/sheet1.xml")
+	require.Contains(t, files["xl/styles.xml"], `<fonts count="2">`)
+	require.Contains(t, files["xl/styles.xml"], `<b/>`)
+	require.Contains(t, files["xl/styles.xml"], `<alignment horizontal="center" vertical="center"/>`)
 	require.Contains(t, files["xl/workbook.xml"], `name="资源表"`)
 	require.Contains(t, files["xl/worksheets/sheet1.xml"], "主机名")
 	require.Contains(t, files["xl/worksheets/sheet1.xml"], "cnshalinhpc01")
-	require.Contains(t, files["xl/worksheets/sheet1.xml"], `<v>12.5</v>`)
-	require.Contains(t, files["xl/worksheets/sheet1.xml"], `t="b"><v>1</v>`)
+	require.Contains(t, files["xl/worksheets/sheet1.xml"], `r="A1" s="1"`)
+	require.Contains(t, files["xl/worksheets/sheet1.xml"], `r="A2" s="0"`)
+	require.Contains(t, files["xl/worksheets/sheet1.xml"], `s="0"><v>12.5</v>`)
+	require.Contains(t, files["xl/worksheets/sheet1.xml"], `s="0" t="b"><v>1</v>`)
 }

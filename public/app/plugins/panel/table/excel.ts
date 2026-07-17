@@ -8,6 +8,23 @@ const MAX_DATA_ROWS_PER_SHEET = 1048575;
 const SHEET_BUILD_CHUNK_SIZE = 10000;
 const COLUMN_WIDTH_SAMPLE_ROWS = 500;
 
+type StyledCell = XLSX.CellObject & {
+  s?: {
+    font: { bold: boolean; color: { rgb: string } };
+    alignment: { horizontal: string; vertical: string };
+  };
+};
+
+const BODY_CELL_STYLE = {
+  font: { bold: false, color: { rgb: '000000' } },
+  alignment: { horizontal: 'center', vertical: 'center' },
+};
+
+const HEADER_CELL_STYLE = {
+  font: { bold: true, color: { rgb: '000000' } },
+  alignment: { horizontal: 'center', vertical: 'center' },
+};
+
 export type ExcelExportProgress = (completedRows: number, totalRows: number) => void;
 
 function getVisibleFields(frame: DataFrame): Field[] {
@@ -122,6 +139,22 @@ function yieldToBrowser(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function applyWorksheetStyles(worksheet: XLSX.WorkSheet): void {
+  if (!worksheet['!ref']) {
+    return;
+  }
+
+  const range = XLSX.utils.decode_range(worksheet['!ref']);
+  for (let row = range.s.r; row <= range.e.r; row++) {
+    for (let column = range.s.c; column <= range.e.c; column++) {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: row, c: column })] as StyledCell | undefined;
+      if (cell) {
+        cell.s = row === 0 ? HEADER_CELL_STYLE : BODY_CELL_STYLE;
+      }
+    }
+  }
+}
+
 export async function exportDataFrameToExcel(
   frame: DataFrame,
   panelTitle: string,
@@ -158,6 +191,7 @@ export async function exportDataFrameToExcel(
     }
 
     worksheet['!cols'] = columnWidths;
+    applyWorksheetStyles(worksheet);
     worksheet['!autofilter'] = {
       ref: XLSX.utils.encode_range({
         s: { c: 0, r: 0 },
@@ -168,5 +202,8 @@ export async function exportDataFrameToExcel(
   }
 
   onProgress?.(frame.length, frame.length);
-  XLSX.writeFile(workbook, `${sanitizeFileName(panelTitle)}-${getTimestamp()}.xlsx`, { compression: true });
+  XLSX.writeFile(workbook, `${sanitizeFileName(panelTitle)}-${getTimestamp()}.xlsx`, {
+    compression: true,
+    cellStyles: true,
+  });
 }

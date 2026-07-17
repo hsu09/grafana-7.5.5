@@ -39,7 +39,6 @@ interface TableExportDatasource {
 }
 
 const TABLE_PREVIEW_ROW_LIMIT = 1000000;
-const SERVER_EXPORT_ROW_THRESHOLD = 100000;
 
 export class TablePanel extends Component<Props, State> {
   state: State = {
@@ -118,7 +117,7 @@ export class TablePanel extends Component<Props, State> {
     });
 
     try {
-      const exportedOnServer = await this.exportLargeSqlResult(frame);
+      const exportedOnServer = await this.exportSqlResult(frame);
       if (!exportedOnServer) {
         await exportDataFrameToExcel(frame, this.props.title, this.props.options.sortBy || [], (completed, total) => {
           const percent = total > 0 ? Math.round((completed / total) * 100) : 100;
@@ -134,8 +133,8 @@ export class TablePanel extends Component<Props, State> {
     }
   };
 
-  exportLargeSqlResult = async (frame: DataFrame): Promise<boolean> => {
-    if (frame.length < SERVER_EXPORT_ROW_THRESHOLD || !this.props.data.request) {
+  exportSqlResult = async (frame: DataFrame): Promise<boolean> => {
+    if (!this.props.data.request) {
       return false;
     }
 
