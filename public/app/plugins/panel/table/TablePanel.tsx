@@ -1,6 +1,6 @@
 import React, { Component } from 'react';
 
-import { Select, Table } from '@grafana/ui';
+import { Button, Select, Table } from '@grafana/ui';
 import { DataFrame, FieldMatcherID, getFrameDisplayName, PanelProps, SelectableValue } from '@grafana/data';
 import { Options } from './types';
 import { css } from 'emotion';
@@ -9,6 +9,7 @@ import { FilterItem, TableSortByFieldState } from '@grafana/ui/src/components/Ta
 import { dispatch } from '../../../store/store';
 import { applyFilterFromTable } from '../../../features/variables/adhoc/actions';
 import { getDashboardSrv } from '../../../features/dashboard/services/DashboardSrv';
+import { exportDataFrameToExcel } from './excel';
 
 interface Props extends PanelProps<Options> {}
 
@@ -77,6 +78,10 @@ export class TablePanel extends Component<Props> {
     dispatch(applyFilterFromTable({ datasource, key, operator, value }));
   };
 
+  onExportExcel = (frame: DataFrame) => {
+    exportDataFrameToExcel(frame, this.props.title, this.props.options.sortBy || []);
+  };
+
   renderTable(frame: DataFrame, width: number, height: number) {
     const { options } = this.props;
 
@@ -111,10 +116,13 @@ export class TablePanel extends Component<Props> {
       return <div>No data</div>;
     }
 
+    const inputHeight = config.theme.spacing.formInputHeight;
+    const padding = 8 * 2;
+    const toolbarHeight = inputHeight + padding;
+
     if (count > 1) {
-      const inputHeight = config.theme.spacing.formInputHeight;
-      const padding = 8 * 2;
       const currentIndex = this.getCurrentFrameIndex();
+      const currentFrame = data.series[currentIndex];
       const names = data.series.map((frame, index) => {
         return {
           label: getFrameDisplayName(frame),
@@ -124,15 +132,40 @@ export class TablePanel extends Component<Props> {
 
       return (
         <div className={tableStyles.wrapper}>
-          {this.renderTable(data.series[currentIndex], width, height - inputHeight - padding)}
-          <div className={tableStyles.selectWrapper}>
-            <Select options={names} value={names[currentIndex]} onChange={this.onChangeTableSelection} />
+          {this.renderTable(currentFrame, width, height - toolbarHeight)}
+          <div className={tableStyles.toolbar}>
+            <div className={tableStyles.selectWrapper}>
+              <Select options={names} value={names[currentIndex]} onChange={this.onChangeTableSelection} />
+            </div>
+            <Button
+              icon="download-alt"
+              size="sm"
+              variant="secondary"
+              onClick={() => this.onExportExcel(currentFrame)}
+            >
+              Export Excel
+            </Button>
           </div>
         </div>
       );
     }
 
-    return this.renderTable(data.series[0], width, height - 12);
+    const currentFrame = data.series[0];
+    return (
+      <div className={tableStyles.wrapper}>
+        {this.renderTable(currentFrame, width, height - toolbarHeight)}
+        <div className={tableStyles.toolbar}>
+          <Button
+            icon="download-alt"
+            size="sm"
+            variant="secondary"
+            onClick={() => this.onExportExcel(currentFrame)}
+          >
+            Export Excel
+          </Button>
+        </div>
+      </div>
+    );
   }
 }
 
@@ -143,7 +176,15 @@ const tableStyles = {
     justify-content: space-between;
     height: 100%;
   `,
-  selectWrapper: css`
+  toolbar: css`
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
     padding: 8px;
+  `,
+  selectWrapper: css`
+    flex: 1;
+    min-width: 0;
   `,
 };
