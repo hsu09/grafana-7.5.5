@@ -7,6 +7,7 @@ import {
   FieldMatcherID,
   getFieldDisplayName,
   getFrameDisplayName,
+  LoadingState,
   PanelProps,
   SelectableValue,
 } from '@grafana/data';
@@ -26,6 +27,11 @@ interface Props extends PanelProps<Options> {}
 interface State {
   exporting: boolean;
   exportStatus: string;
+  totalRows?: number;
+}
+
+interface TableCountResponse {
+  totalRows: number;
 }
 
 interface TableExportDatasource {
@@ -44,6 +50,69 @@ export class TablePanel extends Component<Props, State> {
   state: State = {
     exporting: false,
     exportStatus: '',
+  };
+
+  private countRequestId = 0;
+
+  componentDidMount() {
+    this.updateTotalRows();
+  }
+
+  componentDidUpdate(prevProps: Props) {
+    if (prevProps.data !== this.props.data) {
+      this.updateTotalRows();
+    }
+  }
+
+  componentWillUnmount() {
+    this.countRequestId++;
+  }
+
+  updateTotalRows = async () => {
+    const requestId = ++this.countRequestId;
+    if (this.props.data.state !== LoadingState.Done || !this.props.data.series?.length) {
+      if (this.state.totalRows !== undefined) {
+        this.setState({ totalRows: undefined });
+      }
+      return;
+    }
+
+    const frame = this.props.data.series[this.getCurrentFrameIndex()];
+    if (frame.length < TABLE_PREVIEW_ROW_LIMIT || !this.props.data.request) {
+      this.setState({ totalRows: frame.length });
+      return;
+    }
+
+    this.setState({ totalRows: undefined });
+    try {
+      const panelModel = getDashboardSrv().getCurrent().getPanelById(this.props.id);
+      const datasource = ((await getDataSourceSrv().get(panelModel?.datasource)) as unknown) as TableExportDatasource;
+      if (typeof datasource.getTableExportRequest !== 'function') {
+        return;
+      }
+
+      const queryRequest = datasource.getTableExportRequest(this.props.data.request);
+      if (!queryRequest.queries.length) {
+        return;
+      }
+
+      const response = await getBackendSrv()
+        .fetch<TableCountResponse>({
+          url: '/api/tsdb/query/count',
+          method: 'POST',
+          data: queryRequest,
+          showSuccessAlert: false,
+          hideFromInspector: true,
+        })
+        .toPromise();
+
+      const totalRows = Number(response?.data?.totalRows);
+      if (requestId === this.countRequestId && Number.isFinite(totalRows) && totalRows >= frame.length) {
+        this.setState({ totalRows });
+      }
+    } catch {
+      // Keep the capped count with a plus suffix when an exact count is unavailable.
+    }
   };
 
   onColumnResize = (fieldDisplayName: string, width: number) => {
@@ -113,7 +182,7 @@ export class TablePanel extends Component<Props, State> {
 
     this.setState({
       exporting: true,
-      exportStatus: `Preparing ${frame.length.toLocaleString()} rows...`,
+      exportStatus: 'Preparing...',
     });
 
     try {
@@ -149,7 +218,7 @@ export class TablePanel extends Component<Props, State> {
       return false;
     }
 
-    this.setState({ exportStatus: `Server export: ${frame.length.toLocaleString()}+ rows...` });
+    this.setState({ exportStatus: 'Exporting...' });
     const response = await getBackendSrv()
       .fetch<Blob>({
         url: '/api/tsdb/query/xlsx',
@@ -206,10 +275,16 @@ export class TablePanel extends Component<Props, State> {
   }
 
   renderToolbar(frame: DataFrame, selector?: React.ReactNode) {
+    const previewIsCapped = frame.length >= TABLE_PREVIEW_ROW_LIMIT;
+    const rowCount = this.state.totalRows ?? frame.length;
+    const rowCountSuffix = previewIsCapped && this.state.totalRows === undefined ? '+' : '';
     return (
       <div className={tableStyles.toolbar}>
         {selector}
-        <div className={tableStyles.previewInfo}>{frame.length.toLocaleString()} rows</div>
+        <div className={tableStyles.previewInfo}>
+          {rowCount.toLocaleString()}
+          {rowCountSuffix} rows
+        </div>
         <Button
           icon="download-alt"
           size="sm"

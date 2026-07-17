@@ -82,3 +82,21 @@ func TestWriteTableExportWorkbook(t *testing.T) {
 	require.Contains(t, files["xl/worksheets/sheet1.xml"], `r="D3" s="2"><v>140.0</v>`)
 	require.NotContains(t, files["xl/worksheets/sheet1.xml"], `<autoFilter`)
 }
+
+func TestBuildTableCountSQL(t *testing.T) {
+	query, err := buildTableCountSQL(" SELECT * FROM jobs ORDER BY end_time DESC; ")
+	require.NoError(t, err)
+	require.Equal(t, "SELECT COUNT(*) AS total_rows FROM (SELECT * FROM jobs ORDER BY end_time DESC) AS grafana_table_count", query)
+
+	_, err = buildTableCountSQL(" ; ")
+	require.Error(t, err)
+}
+
+func TestTableCountValue(t *testing.T) {
+	count, ok := tableCountValue([]byte("2000000"))
+	require.True(t, ok)
+	require.Equal(t, int64(2000000), count)
+
+	_, ok = tableCountValue("invalid")
+	require.False(t, ok)
+}

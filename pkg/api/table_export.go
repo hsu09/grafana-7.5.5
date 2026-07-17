@@ -2,6 +2,8 @@ package api
 
 import (
 	"archive/zip"
+	"bufio"
+	"bytes"
 	"compress/flate"
 	"encoding/json"
 	"encoding/xml"
@@ -24,12 +26,14 @@ import (
 )
 
 const (
+	maxInt64Value            = int64(1<<63 - 1)
 	excelMaxDataRowsPerSheet = 1048575
 	excelMaxCellRunes        = 32767
 	excelColumnWidthSamples  = 500
 	excelBodyCellStyle       = 0
 	excelHeaderCellStyle     = 1
 	excelOneDecimalCellStyle = 2
+	excelWorksheetBufferSize = 256 * 1024
 )
 
 type tableExportColumn struct {
@@ -66,6 +70,10 @@ type tableExportResponse struct {
 	sheets   []tableExportSheet
 }
 
+type tableCountResponse struct {
+	TotalRows int64 `json:"totalRows"`
+}
+
 func (r *tableExportResponse) Body() []byte {
 	return nil
 }
@@ -83,6 +91,132 @@ func (r *tableExportResponse) WriteTo(ctx *models.ReqContext) {
 
 	if err := writeTableExportWorkbook(ctx.Resp, r.sheets); err != nil {
 		ctx.Logger.Error("Failed to stream Excel table export", "error", err)
+	}
+}
+
+// QueryTableCount runs lightweight count wrappers for SQL table queries so a capped dashboard preview can show the full total.
+func (hs *HTTPServer) QueryTableCount(c *models.ReqContext, reqDTO tableExportRequest) response.Response {
+	if len(reqDTO.Queries) == 0 {
+		return response.Error(http.StatusBadRequest, "No queries found in count request", nil)
+	}
+
+	request := &tsdb.TsdbQuery{
+		TimeRange: tsdb.NewTimeRange(reqDTO.From, reqDTO.To),
+		Debug:     reqDTO.Debug,
+		User:      c.SignedInUser,
+		Queries:   make([]*tsdb.Query, 0, len(reqDTO.Queries)),
+	}
+
+	var ds *models.DataSource
+	for i, query := range reqDTO.Queries {
+		rawSQL := query.Get("rawSql").MustString()
+		countSQL, err := buildTableCountSQL(rawSQL)
+		if err != nil {
+			return response.Error(http.StatusBadRequest, "Unable to count table rows", err)
+		}
+		query.Set("rawSql", countSQL)
+		query.Set("format", "table")
+		query.Set(sqleng.FullTableExportQueryFlag, true)
+
+		datasourceID, err := query.Get("datasourceId").Int64()
+		if err != nil {
+			return response.Error(http.StatusBadRequest, "Count query missing data source ID", nil)
+		}
+		if i == 0 {
+			ds, err = hs.DatasourceCache.GetDatasource(datasourceID, c.SignedInUser, c.SkipCache)
+			if err != nil {
+				return hs.handleGetDataSourceError(err, datasourceID)
+			}
+		}
+
+		request.Queries = append(request.Queries, &tsdb.Query{
+			RefId:         query.Get("refId").MustString("A"),
+			MaxDataPoints: 1,
+			IntervalMs:    query.Get("intervalMs").MustInt64(1000),
+			QueryType:     query.Get("queryType").MustString(""),
+			Model:         query,
+			DataSource:    ds,
+		})
+	}
+
+	if err := hs.PluginRequestValidator.Validate(ds.Url, nil); err != nil {
+		return response.Error(http.StatusForbidden, "Access denied", err)
+	}
+
+	queryResponse, err := tsdb.HandleRequest(c.Req.Context(), ds, request)
+	if err != nil {
+		return response.Error(http.StatusInternalServerError, "Table row count failed", err)
+	}
+	for _, result := range queryResponse.Results {
+		if result.Error != nil {
+			return response.Error(http.StatusBadRequest, "Table row count failed", result.Error)
+		}
+	}
+
+	countData, err := collectTableExportData(queryResponse, nil)
+	if err != nil {
+		return response.Error(http.StatusInternalServerError, "Unable to read table row count", err)
+	}
+	var totalRows int64
+	for _, data := range countData {
+		if data.rowCount == 0 || len(data.columns) == 0 {
+			continue
+		}
+		count, ok := tableCountValue(data.cellValue(0, 0))
+		if !ok {
+			return response.Error(http.StatusInternalServerError, "Table row count returned an invalid value", nil)
+		}
+		totalRows += count
+	}
+
+	return response.JSON(http.StatusOK, tableCountResponse{TotalRows: totalRows})
+}
+
+func buildTableCountSQL(rawSQL string) (string, error) {
+	rawSQL = strings.TrimRight(strings.TrimSpace(rawSQL), "; \t\r\n")
+	if rawSQL == "" {
+		return "", fmt.Errorf("table query is empty")
+	}
+	return fmt.Sprintf("SELECT COUNT(*) AS total_rows FROM (%s) AS grafana_table_count", rawSQL), nil
+}
+
+func tableCountValue(value interface{}) (int64, bool) {
+	value = dereferenceTableExportValue(value)
+	if value == nil {
+		return 0, false
+	}
+
+	switch typed := value.(type) {
+	case json.Number:
+		count, err := typed.Int64()
+		return count, err == nil && count >= 0
+	case []byte:
+		count, err := strconv.ParseInt(strings.TrimSpace(string(typed)), 10, 64)
+		return count, err == nil && count >= 0
+	case string:
+		count, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		return count, err == nil && count >= 0
+	}
+
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		count := reflected.Int()
+		return count, count >= 0
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		count := reflected.Uint()
+		if count > uint64(maxInt64Value) {
+			return 0, false
+		}
+		return int64(count), true
+	case reflect.Float32, reflect.Float64:
+		count := reflected.Float()
+		if math.IsNaN(count) || math.IsInf(count, 0) || count < 0 || count > float64(maxInt64Value) || math.Trunc(count) != count {
+			return 0, false
+		}
+		return int64(count), true
+	default:
+		return 0, false
 	}
 }
 
@@ -386,7 +520,12 @@ func writeTableExportWorkbook(writer io.Writer, sheets []tableExportSheet) error
 			_ = zipWriter.Close()
 			return err
 		}
-		if err := writeWorksheet(entry, sheet); err != nil {
+		bufferedEntry := bufio.NewWriterSize(entry, excelWorksheetBufferSize)
+		if err := writeWorksheet(bufferedEntry, sheet); err != nil {
+			_ = zipWriter.Close()
+			return err
+		}
+		if err := bufferedEntry.Flush(); err != nil {
 			_ = zipWriter.Close()
 			return err
 		}
@@ -480,18 +619,31 @@ func writeWorksheet(writer io.Writer, sheet tableExportSheet) error {
 		return err
 	}
 
+	excelColumns := make([]string, columnCount)
+	columnStyles := make([]int, columnCount)
+	for column, name := range sheet.data.columns {
+		excelColumns[column] = excelColumnName(column)
+		columnStyles[column] = tableExportCellStyle(name)
+	}
+
+	var rowBuffer bytes.Buffer
+	rowBuffer.Grow(columnCount * 96)
 	for sourceRow := sheet.rowStart; sourceRow < sheet.rowEnd; sourceRow++ {
+		rowBuffer.Reset()
 		excelRow := sourceRow - sheet.rowStart + 2
-		if _, err := fmt.Fprintf(writer, `<row r="%d">`, excelRow); err != nil {
+		excelRowText := strconv.Itoa(excelRow)
+		if _, err := fmt.Fprintf(&rowBuffer, `<row r="%d">`, excelRow); err != nil {
 			return err
 		}
 		for column := range sheet.data.columns {
-			style := tableExportCellStyle(sheet.data.columns[column])
-			if err := writeTableExportCell(writer, excelColumnName(column)+strconv.Itoa(excelRow), sheet.data.cellValue(sourceRow, column), style); err != nil {
+			if err := writeTableExportCell(&rowBuffer, excelColumns[column], excelRowText, sheet.data.cellValue(sourceRow, column), columnStyles[column]); err != nil {
 				return err
 			}
 		}
-		if _, err := io.WriteString(writer, `</row>`); err != nil {
+		if _, err := io.WriteString(&rowBuffer, `</row>`); err != nil {
+			return err
+		}
+		if _, err := writer.Write(rowBuffer.Bytes()); err != nil {
 			return err
 		}
 	}
@@ -610,7 +762,7 @@ func formatOneDecimalValue(value interface{}) (string, bool) {
 	return strconv.FormatFloat(numericValue, 'f', 1, 64), true
 }
 
-func writeTableExportCell(writer io.Writer, reference string, value interface{}, style int) error {
+func writeTableExportCell(writer io.Writer, columnReference, rowReference string, value interface{}, style int) error {
 	if value == nil {
 		return nil
 	}
@@ -623,21 +775,21 @@ func writeTableExportCell(writer io.Writer, reference string, value interface{},
 
 	if style == excelOneDecimalCellStyle {
 		if formatted, ok := formatOneDecimalValue(value); ok {
-			_, err := fmt.Fprintf(writer, `<c r="%s" s="%d"><v>%s</v></c>`, reference, style, formatted)
+			_, err := fmt.Fprintf(writer, `<c r="%s%s" s="%d"><v>%s</v></c>`, columnReference, rowReference, style, formatted)
 			return err
 		}
 	}
 
 	switch typed := value.(type) {
 	case time.Time:
-		return writeInlineStringCell(writer, reference, typed.Format(time.RFC3339Nano), style)
+		return writeInlineStringCellParts(writer, columnReference, rowReference, typed.Format(time.RFC3339Nano), style)
 	case json.Number:
-		if _, err := fmt.Fprintf(writer, `<c r="%s" s="%d"><v>%s</v></c>`, reference, style, typed.String()); err != nil {
+		if _, err := fmt.Fprintf(writer, `<c r="%s%s" s="%d"><v>%s</v></c>`, columnReference, rowReference, style, typed.String()); err != nil {
 			return err
 		}
 		return nil
 	case []byte:
-		return writeInlineStringCell(writer, reference, string(typed), style)
+		return writeInlineStringCellParts(writer, columnReference, rowReference, string(typed), style)
 	}
 
 	switch reflected.Kind() {
@@ -646,29 +798,33 @@ func writeTableExportCell(writer io.Writer, reference string, value interface{},
 		if reflected.Bool() {
 			value = 1
 		}
-		_, err := fmt.Fprintf(writer, `<c r="%s" s="%d" t="b"><v>%d</v></c>`, reference, style, value)
+		_, err := fmt.Fprintf(writer, `<c r="%s%s" s="%d" t="b"><v>%d</v></c>`, columnReference, rowReference, style, value)
 		return err
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		_, err := fmt.Fprintf(writer, `<c r="%s" s="%d"><v>%d</v></c>`, reference, style, reflected.Int())
+		_, err := fmt.Fprintf(writer, `<c r="%s%s" s="%d"><v>%d</v></c>`, columnReference, rowReference, style, reflected.Int())
 		return err
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		_, err := fmt.Fprintf(writer, `<c r="%s" s="%d"><v>%d</v></c>`, reference, style, reflected.Uint())
+		_, err := fmt.Fprintf(writer, `<c r="%s%s" s="%d"><v>%d</v></c>`, columnReference, rowReference, style, reflected.Uint())
 		return err
 	case reflect.Float32, reflect.Float64:
 		value := reflected.Float()
 		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return writeInlineStringCell(writer, reference, fmt.Sprint(value), style)
+			return writeInlineStringCellParts(writer, columnReference, rowReference, fmt.Sprint(value), style)
 		}
-		_, err := fmt.Fprintf(writer, `<c r="%s" s="%d"><v>%s</v></c>`, reference, style, strconv.FormatFloat(value, 'g', -1, 64))
+		_, err := fmt.Fprintf(writer, `<c r="%s%s" s="%d"><v>%s</v></c>`, columnReference, rowReference, style, strconv.FormatFloat(value, 'g', -1, 64))
 		return err
 	default:
-		return writeInlineStringCell(writer, reference, fmt.Sprint(value), style)
+		return writeInlineStringCellParts(writer, columnReference, rowReference, fmt.Sprint(value), style)
 	}
 }
 
 func writeInlineStringCell(writer io.Writer, reference, value string, style int) error {
+	return writeInlineStringCellParts(writer, reference, "", value, style)
+}
+
+func writeInlineStringCellParts(writer io.Writer, columnReference, rowReference, value string, style int) error {
 	value = sanitizeXMLText(truncateRunes(value, excelMaxCellRunes))
-	if _, err := fmt.Fprintf(writer, `<c r="%s" s="%d" t="inlineStr"><is><t xml:space="preserve">`, reference, style); err != nil {
+	if _, err := fmt.Fprintf(writer, `<c r="%s%s" s="%d" t="inlineStr"><is><t xml:space="preserve">`, columnReference, rowReference, style); err != nil {
 		return err
 	}
 	if err := xml.EscapeText(writer, []byte(value)); err != nil {
