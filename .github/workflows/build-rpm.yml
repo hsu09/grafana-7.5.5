@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - fix_v4
+      - fix_v5
     paths:
       - '.github/workflows/build-rpm.yml'
       - 'pkg/tsdb/sqleng/**'
@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   build-rpm:
-    name: Build Grafana 7.5.5 million-row XLSX linux x64 RPM
+    name: Build Grafana 7.5.5 total-row XLSX linux x64 RPM
     runs-on: ubuntu-22.04
     timeout-minutes: 180
 
@@ -223,7 +223,7 @@ jobs:
       - name: Upload RPM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: grafana-7.5.5-fix-v4-million-row-xlsx-rpm
+          name: grafana-7.5.5-fix-v5-total-rows-xlsx-rpm
           path: |
             dist/*.rpm
             dist/*.sha256

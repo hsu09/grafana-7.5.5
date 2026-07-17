@@ -206,16 +206,10 @@ export class TablePanel extends Component<Props, State> {
   }
 
   renderToolbar(frame: DataFrame, selector?: React.ReactNode) {
-    const reachedPreviewLimit = frame.length >= TABLE_PREVIEW_ROW_LIMIT;
-    const displayedRows = Math.min(frame.length, TABLE_PREVIEW_ROW_LIMIT);
     return (
       <div className={tableStyles.toolbar}>
         {selector}
-        {reachedPreviewLimit && (
-          <div className={tableStyles.previewInfo}>
-            Showing {displayedRows.toLocaleString()} of {frame.length.toLocaleString()} rows; export includes all
-          </div>
-        )}
+        <div className={tableStyles.previewInfo}>{frame.length.toLocaleString()} rows</div>
         <Button
           icon="download-alt"
           size="sm"
