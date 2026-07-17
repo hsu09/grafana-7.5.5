@@ -4,6 +4,11 @@ import * as XLSX from 'xlsx';
 
 const DEFAULT_FILE_NAME = 'grafana-table';
 const DEFAULT_SHEET_NAME = 'Table';
+const MAX_DATA_ROWS_PER_SHEET = 1048575;
+const SHEET_BUILD_CHUNK_SIZE = 10000;
+const COLUMN_WIDTH_SAMPLE_ROWS = 500;
+
+export type ExcelExportProgress = (completedRows: number, totalRows: number) => void;
 
 function getVisibleFields(frame: DataFrame): Field[] {
   return frame.fields.filter((field) => {
@@ -35,12 +40,12 @@ function compareValues(left: unknown, right: unknown): number {
   });
 }
 
-function getRowIndexes(frame: DataFrame, fields: Field[], sortBy: TableSortByFieldState[]): number[] {
-  const indexes = Array.from({ length: frame.length }, (_, index) => index);
-
+function getSortedRowIndexes(frame: DataFrame, fields: Field[], sortBy: TableSortByFieldState[]): number[] | undefined {
   if (!sortBy.length) {
-    return indexes;
+    return undefined;
   }
+
+  const indexes = Array.from({ length: frame.length }, (_, index) => index);
 
   const sortFields = sortBy
     .map((sort) => ({
@@ -48,6 +53,10 @@ function getRowIndexes(frame: DataFrame, fields: Field[], sortBy: TableSortByFie
       desc: Boolean(sort.desc),
     }))
     .filter((sort): sort is { field: Field; desc: boolean } => Boolean(sort.field));
+
+  if (!sortFields.length) {
+    return undefined;
+  }
 
   return indexes.sort((leftIndex, rightIndex) => {
     for (const sort of sortFields) {
@@ -88,52 +97,76 @@ function sanitizeFileName(title: string): string {
   return sanitized || DEFAULT_FILE_NAME;
 }
 
-function sanitizeSheetName(title: string): string {
+function sanitizeSheetName(title: string, part: number, partCount: number): string {
   const sanitized = title.replace(/[\\/?*:[\]]+/g, '_').trim();
-  return (sanitized || DEFAULT_SHEET_NAME).slice(0, 31);
+  const suffix = partCount > 1 ? `_${part + 1}` : '';
+  return `${(sanitized || DEFAULT_SHEET_NAME).slice(0, 31 - suffix.length)}${suffix}`;
 }
 
 function getTimestamp(): string {
   return new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
 }
 
-function getColumnWidths(rows: Array<Array<string | number | boolean>>): Array<{ wch: number }> {
-  const header = rows[0] || [];
-
-  return header.map((_, columnIndex) => {
-    const width = rows.reduce((current, row) => {
-      const value = row[columnIndex];
-      return Math.max(current, String(value === undefined ? '' : value).length);
-    }, 0);
-
+function getColumnWidths(frame: DataFrame, fields: Field[]): Array<{ wch: number }> {
+  return fields.map((field) => {
+    let width = getFieldDisplayName(field, frame).length;
+    const sampleCount = Math.min(frame.length, COLUMN_WIDTH_SAMPLE_ROWS);
+    for (let rowIndex = 0; rowIndex < sampleCount; rowIndex++) {
+      width = Math.max(width, String(getCellValue(field, rowIndex)).length);
+    }
     return { wch: Math.max(12, Math.min(width + 2, 60)) };
   });
 }
 
-export function exportDataFrameToExcel(
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+export async function exportDataFrameToExcel(
   frame: DataFrame,
   panelTitle: string,
-  sortBy: TableSortByFieldState[] = []
-): void {
+  sortBy: TableSortByFieldState[] = [],
+  onProgress?: ExcelExportProgress
+): Promise<void> {
   const fields = getVisibleFields(frame);
   if (!fields.length) {
     return;
   }
 
-  const rows: Array<Array<string | number | boolean>> = [fields.map((field) => getFieldDisplayName(field, frame))];
-  const rowIndexes = getRowIndexes(frame, fields, sortBy);
+  const workbook = XLSX.utils.book_new();
+  const rowIndexes = getSortedRowIndexes(frame, fields, sortBy);
+  const partCount = Math.max(1, Math.ceil(frame.length / MAX_DATA_ROWS_PER_SHEET));
+  const columnWidths = getColumnWidths(frame, fields);
+  let completedRows = 0;
 
-  for (const rowIndex of rowIndexes) {
-    rows.push(fields.map((field) => getCellValue(field, rowIndex)));
+  for (let part = 0; part < partCount; part++) {
+    const partStart = part * MAX_DATA_ROWS_PER_SHEET;
+    const partEnd = Math.min(frame.length, partStart + MAX_DATA_ROWS_PER_SHEET);
+    const worksheet = XLSX.utils.aoa_to_sheet([fields.map((field) => getFieldDisplayName(field, frame))]);
+
+    for (let chunkStart = partStart; chunkStart < partEnd; chunkStart += SHEET_BUILD_CHUNK_SIZE) {
+      const chunkEnd = Math.min(partEnd, chunkStart + SHEET_BUILD_CHUNK_SIZE);
+      const rows: Array<Array<string | number | boolean>> = [];
+      for (let rowPosition = chunkStart; rowPosition < chunkEnd; rowPosition++) {
+        const rowIndex = rowIndexes ? rowIndexes[rowPosition] : rowPosition;
+        rows.push(fields.map((field) => getCellValue(field, rowIndex)));
+      }
+      XLSX.utils.sheet_add_aoa(worksheet, rows, { origin: -1 });
+      completedRows += rows.length;
+      onProgress?.(completedRows, frame.length);
+      await yieldToBrowser();
+    }
+
+    worksheet['!cols'] = columnWidths;
+    worksheet['!autofilter'] = {
+      ref: XLSX.utils.encode_range({
+        s: { c: 0, r: 0 },
+        e: { c: fields.length - 1, r: partEnd - partStart },
+      }),
+    };
+    XLSX.utils.book_append_sheet(workbook, worksheet, sanitizeSheetName(panelTitle, part, partCount));
   }
 
-  const worksheet = XLSX.utils.aoa_to_sheet(rows);
-  worksheet['!cols'] = getColumnWidths(rows);
-  worksheet['!autofilter'] = {
-    ref: XLSX.utils.encode_range({ s: { c: 0, r: 0 }, e: { c: fields.length - 1, r: rows.length - 1 } }),
-  };
-
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, sanitizeSheetName(panelTitle));
+  onProgress?.(frame.length, frame.length);
   XLSX.writeFile(workbook, `${sanitizeFileName(panelTitle)}-${getTimestamp()}.xlsx`, { compression: true });
 }

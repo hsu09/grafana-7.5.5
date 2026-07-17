@@ -4,15 +4,19 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - fix_v2
+      - fix_v3
     paths:
       - '.github/workflows/build-rpm.yml'
       - 'pkg/tsdb/sqleng/**'
+      - 'pkg/api/**'
       - 'go.mod'
       - 'go.sum'
       - 'package.json'
       - 'yarn.lock'
       - 'public/app/plugins/panel/table/**'
+      - 'public/app/plugins/datasource/mysql/**'
+      - 'public/app/plugins/datasource/postgres/**'
+      - 'public/app/plugins/datasource/mssql/**'
       - 'build.go'
       - 'scripts/**'
       - 'packaging/**'
@@ -22,7 +26,7 @@ permissions:
 
 jobs:
   build-rpm:
-    name: Build Grafana 7.5.5 XLSX linux x64 RPM
+    name: Build Grafana 7.5.5 large XLSX linux x64 RPM
     runs-on: ubuntu-22.04
     timeout-minutes: 180
 
@@ -127,6 +131,21 @@ jobs:
               ./bin/grabpl build-backend --jobs 4 --edition oss --build-id "${DRONE_BUILD_NUMBER}" --variants linux-x64 --no-pull-enterprise
             '
 
+      - name: Test streaming Excel export
+        run: |
+          set -euxo pipefail
+
+          docker run --rm \
+            -e GOROOT="/go/src/github.com/grafana/grafana/.tools/go" \
+            -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
+            -w /go/src/github.com/grafana/grafana \
+            "${GRAFANA_BUILD_CONTAINER}" \
+            bash -lc '
+              set -euxo pipefail
+              export PATH="${GOROOT}/bin:${PATH}"
+              go test ./pkg/api -run "Test(SplitTableExportSheets|WriteTableExportWorkbook)$" -count=1
+            '
+
       - name: Build frontend
         run: |
           set -euxo pipefail
@@ -203,7 +222,7 @@ jobs:
       - name: Upload RPM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: grafana-7.5.5-fix-v2-xlsx-rpm
+          name: grafana-7.5.5-fix-v3-large-xlsx-rpm
           path: |
             dist/*.rpm
             dist/*.sha256

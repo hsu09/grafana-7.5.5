@@ -69,6 +69,22 @@ export class MssqlDatasource {
   }
 
   query(options: any): Observable<MssqlResponse> {
+    const request = this.getTableExportRequest(options);
+
+    if (request.queries.length === 0) {
+      return of({ data: [] });
+    }
+
+    return getBackendSrv()
+      .fetch({
+        url: '/api/tsdb/query',
+        method: 'POST',
+        data: request,
+      })
+      .pipe(map(this.responseParser.processQueryResult));
+  }
+
+  getTableExportRequest(options: any) {
     const queries = _.filter(options.targets, (item) => {
       return item.hide !== true;
     }).map((item) => {
@@ -82,21 +98,11 @@ export class MssqlDatasource {
       };
     });
 
-    if (queries.length === 0) {
-      return of({ data: [] });
-    }
-
-    return getBackendSrv()
-      .fetch({
-        url: '/api/tsdb/query',
-        method: 'POST',
-        data: {
-          from: options.range.from.valueOf().toString(),
-          to: options.range.to.valueOf().toString(),
-          queries: queries,
-        },
-      })
-      .pipe(map(this.responseParser.processQueryResult));
+    return {
+      from: options.range.from.valueOf().toString(),
+      to: options.range.to.valueOf().toString(),
+      queries,
+    };
   }
 
   annotationQuery(options: any) {
