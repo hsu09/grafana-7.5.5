@@ -84,9 +84,25 @@ func TestWriteTableExportWorkbook(t *testing.T) {
 }
 
 func TestBuildTableCountSQL(t *testing.T) {
-	query, err := buildTableCountSQL(" SELECT * FROM jobs ORDER BY end_time DESC; ")
+	query, err := buildTableCountSQL(" SELECT job_id, user_name, end_time FROM jobs WHERE end_time >= $__timeFrom() ORDER BY end_time DESC; ")
 	require.NoError(t, err)
-	require.Equal(t, "SELECT COUNT(*) AS total_rows FROM (SELECT * FROM jobs ORDER BY end_time DESC) AS grafana_table_count", query)
+	require.Equal(t, "SELECT COUNT(*) AS total_rows FROM jobs WHERE end_time >= $__timeFrom()", query)
+
+	query, err = buildTableCountSQL("SELECT j.id, (SELECT MAX(e.time) FROM events e WHERE e.job_id = j.id) AS last_event FROM jobs j WHERE j.state = 'DONE' ORDER BY j.id")
+	require.NoError(t, err)
+	require.Equal(t, "SELECT COUNT(*) AS total_rows FROM jobs j WHERE j.state = 'DONE'", query)
+
+	query, err = buildTableCountSQL("SELECT DISTINCT user_name FROM jobs WHERE note = 'order by is text' ORDER BY user_name")
+	require.NoError(t, err)
+	require.Equal(t, "SELECT COUNT(*) AS total_rows FROM (SELECT DISTINCT user_name FROM jobs WHERE note = 'order by is text') AS grafana_table_count", query)
+
+	query, err = buildTableCountSQL("SELECT queue, COUNT(*) FROM jobs GROUP BY queue ORDER BY queue")
+	require.NoError(t, err)
+	require.Equal(t, "SELECT COUNT(*) AS total_rows FROM (SELECT queue, COUNT(*) FROM jobs GROUP BY queue) AS grafana_table_count", query)
+
+	query, err = buildTableCountSQL("SELECT * FROM (SELECT * FROM jobs ORDER BY end_time DESC) recent WHERE state = 'DONE' LIMIT 500000")
+	require.NoError(t, err)
+	require.Equal(t, "SELECT COUNT(*) AS total_rows FROM (SELECT * FROM jobs ORDER BY end_time DESC) recent WHERE state = 'DONE'", query)
 
 	_, err = buildTableCountSQL(" ; ")
 	require.Error(t, err)

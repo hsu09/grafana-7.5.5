@@ -27,6 +27,7 @@ interface Props extends PanelProps<Options> {}
 interface State {
   exporting: boolean;
   exportStatus: string;
+  counting: boolean;
   totalRows?: number;
 }
 
@@ -50,6 +51,7 @@ export class TablePanel extends Component<Props, State> {
   state: State = {
     exporting: false,
     exportStatus: '',
+    counting: false,
   };
 
   private countRequestId = 0;
@@ -59,7 +61,7 @@ export class TablePanel extends Component<Props, State> {
   }
 
   componentDidUpdate(prevProps: Props) {
-    if (prevProps.data !== this.props.data) {
+    if (prevProps.data.request !== this.props.data.request) {
       this.updateTotalRows();
     }
   }
@@ -70,20 +72,14 @@ export class TablePanel extends Component<Props, State> {
 
   updateTotalRows = async () => {
     const requestId = ++this.countRequestId;
-    if (this.props.data.state !== LoadingState.Done || !this.props.data.series?.length) {
-      if (this.state.totalRows !== undefined) {
-        this.setState({ totalRows: undefined });
-      }
+    if (!this.props.data.request) {
+      this.setState({ counting: false, totalRows: undefined });
       return;
     }
 
-    const frame = this.props.data.series[this.getCurrentFrameIndex()];
-    if (frame.length < TABLE_PREVIEW_ROW_LIMIT || !this.props.data.request) {
-      this.setState({ totalRows: frame.length });
-      return;
-    }
-
-    this.setState({ totalRows: undefined });
+    // Count independently and in parallel with the capped preview query. This makes
+    // totals available without waiting for up to 500,000 detail rows to download.
+    this.setState({ counting: true, totalRows: undefined });
     try {
       const panelModel = getDashboardSrv().getCurrent().getPanelById(this.props.id);
       const datasource = ((await getDataSourceSrv().get(panelModel?.datasource)) as unknown) as TableExportDatasource;
@@ -107,11 +103,15 @@ export class TablePanel extends Component<Props, State> {
         .toPromise();
 
       const totalRows = Number(response?.data?.totalRows);
-      if (requestId === this.countRequestId && Number.isFinite(totalRows) && totalRows >= frame.length) {
+      if (requestId === this.countRequestId && Number.isFinite(totalRows) && totalRows >= 0) {
         this.setState({ totalRows });
       }
     } catch {
-      // Keep the capped count with a plus suffix when an exact count is unavailable.
+      // Fall back to the preview frame count when an exact SQL count is unavailable.
+    } finally {
+      if (requestId === this.countRequestId) {
+        this.setState({ counting: false });
+      }
     }
   };
 
@@ -274,23 +274,22 @@ export class TablePanel extends Component<Props, State> {
     return options.frameIndex > 0 && options.frameIndex < count ? options.frameIndex : 0;
   }
 
-  renderToolbar(frame: DataFrame, selector?: React.ReactNode) {
-    const previewIsCapped = frame.length >= TABLE_PREVIEW_ROW_LIMIT;
-    const rowCount = this.state.totalRows ?? frame.length;
+  renderToolbar(frame?: DataFrame, selector?: React.ReactNode) {
+    const previewIsCapped = Boolean(frame && frame.length >= TABLE_PREVIEW_ROW_LIMIT);
+    const rowCount = this.state.totalRows ?? frame?.length;
     const rowCountSuffix = previewIsCapped && this.state.totalRows === undefined ? '+' : '';
     return (
       <div className={tableStyles.toolbar}>
         {selector}
         <div className={tableStyles.previewInfo}>
-          {rowCount.toLocaleString()}
-          {rowCountSuffix} rows
+          {rowCount === undefined ? 'Counting rows...' : `${rowCount.toLocaleString()}${rowCountSuffix} rows`}
         </div>
         <Button
           icon="download-alt"
           size="sm"
           variant="secondary"
-          disabled={this.state.exporting}
-          onClick={() => this.onExportExcel(frame)}
+          disabled={this.state.exporting || !frame}
+          onClick={() => frame && this.onExportExcel(frame)}
         >
           {this.state.exportStatus || 'Export'}
         </Button>
@@ -305,7 +304,14 @@ export class TablePanel extends Component<Props, State> {
     const hasFields = data.series[0]?.fields.length;
 
     if (!count || !hasFields) {
-      return <div>No data</div>;
+      return (
+        <div className={tableStyles.wrapper}>
+          {this.renderToolbar()}
+          <div className={tableStyles.emptyState}>
+            {data.state === LoadingState.Loading ? 'Loading preview...' : 'No data'}
+          </div>
+        </div>
+      );
     }
 
     const toolbarHeight = Math.max(0, config.theme.spacing.formInputHeight - config.theme.panelHeaderHeight);
@@ -378,6 +384,12 @@ const tableStyles = {
     flex: 1;
     min-width: 0;
     pointer-events: auto;
+  `,
+  emptyState: css`
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
   `,
 };
 

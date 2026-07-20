@@ -177,7 +177,181 @@ func buildTableCountSQL(rawSQL string) (string, error) {
 	if rawSQL == "" {
 		return "", fmt.Errorf("table query is empty")
 	}
-	return fmt.Sprintf("SELECT COUNT(*) AS total_rows FROM (%s) AS grafana_table_count", rawSQL), nil
+
+	// Most table panels use a simple SELECT ... FROM ... WHERE ... ORDER BY query.
+	// Replacing the projection directly avoids materializing wide rows and removes
+	// an unnecessary sort, which is substantially faster for multi-million-row
+	// job history tables. Queries whose row cardinality can be changed by DISTINCT,
+	// GROUP BY, aggregates, CTEs, or set operators keep the safe subquery fallback.
+	tokens := scanTopLevelSQLTokens(rawSQL)
+	countSource := stripTopLevelSQLTail(rawSQL, tokens)
+	if fromStart, ok := simpleCountFromStart(tokens, len(countSource)); ok {
+		return "SELECT COUNT(*) AS total_rows " + strings.TrimSpace(countSource[fromStart:]), nil
+	}
+
+	return fmt.Sprintf("SELECT COUNT(*) AS total_rows FROM (%s) AS grafana_table_count", countSource), nil
+}
+
+type topLevelSQLToken struct {
+	word  string
+	start int
+	end   int
+}
+
+// scanTopLevelSQLTokens returns words outside parentheses, quoted values, and comments.
+// This is intentionally a small cardinality parser rather than a dialect-specific SQL parser.
+func scanTopLevelSQLTokens(query string) []topLevelSQLToken {
+	var tokens []topLevelSQLToken
+	depth := 0
+	for index := 0; index < len(query); {
+		switch query[index] {
+		case '\'', '"', '`':
+			quote := query[index]
+			index++
+			for index < len(query) {
+				if query[index] == '\\' {
+					index += 2
+					continue
+				}
+				if query[index] == quote {
+					if index+1 < len(query) && query[index+1] == quote {
+						index += 2
+						continue
+					}
+					index++
+					break
+				}
+				index++
+			}
+			continue
+		case '[':
+			index++
+			for index < len(query) {
+				if query[index] == ']' {
+					if index+1 < len(query) && query[index+1] == ']' {
+						index += 2
+						continue
+					}
+					index++
+					break
+				}
+				index++
+			}
+			continue
+		case '-':
+			if index+1 < len(query) && query[index+1] == '-' {
+				index += 2
+				for index < len(query) && query[index] != '\n' {
+					index++
+				}
+				continue
+			}
+		case '#':
+			index++
+			for index < len(query) && query[index] != '\n' {
+				index++
+			}
+			continue
+		case '/':
+			if index+1 < len(query) && query[index+1] == '*' {
+				index += 2
+				for index+1 < len(query) && !(query[index] == '*' && query[index+1] == '/') {
+					index++
+				}
+				if index+1 < len(query) {
+					index += 2
+				}
+				continue
+			}
+		case '(':
+			depth++
+			index++
+			continue
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			index++
+			continue
+		}
+
+		if isSQLWordStart(query[index]) {
+			start := index
+			index++
+			for index < len(query) && isSQLWordPart(query[index]) {
+				index++
+			}
+			if depth == 0 {
+				tokens = append(tokens, topLevelSQLToken{
+					word:  strings.ToUpper(query[start:index]),
+					start: start,
+					end:   index,
+				})
+			}
+			continue
+		}
+		index++
+	}
+	return tokens
+}
+
+func isSQLWordStart(value byte) bool {
+	return value == '_' || value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z'
+}
+
+func isSQLWordPart(value byte) bool {
+	return isSQLWordStart(value) || value >= '0' && value <= '9' || value == '$'
+}
+
+// stripTopLevelSQLTail removes clauses that do not affect the uncapped row total.
+func stripTopLevelSQLTail(query string, tokens []topLevelSQLToken) string {
+	for index, token := range tokens {
+		switch token.word {
+		case "ORDER":
+			if index+1 < len(tokens) && tokens[index+1].word == "BY" {
+				return strings.TrimSpace(query[:token.start])
+			}
+		case "LIMIT", "OFFSET", "FETCH":
+			return strings.TrimSpace(query[:token.start])
+		}
+	}
+	return strings.TrimSpace(query)
+}
+
+func simpleCountFromStart(tokens []topLevelSQLToken, queryEnd int) (int, bool) {
+	if len(tokens) == 0 || tokens[0].word != "SELECT" {
+		return 0, false
+	}
+
+	fromIndex := -1
+	for index := 1; index < len(tokens); index++ {
+		if tokens[index].start >= queryEnd {
+			break
+		}
+		if tokens[index].word == "FROM" {
+			fromIndex = index
+			break
+		}
+	}
+	if fromIndex < 0 {
+		return 0, false
+	}
+
+	for index := 1; index < fromIndex; index++ {
+		switch tokens[index].word {
+		case "DISTINCT", "TOP", "INTO", "COUNT", "SUM", "AVG", "MIN", "MAX", "GROUP_CONCAT", "STRING_AGG", "ARRAY_AGG", "JSON_AGG":
+			return 0, false
+		}
+	}
+
+	for index := fromIndex + 1; index < len(tokens) && tokens[index].start < queryEnd; index++ {
+		switch tokens[index].word {
+		case "GROUP", "HAVING", "UNION", "INTERSECT", "EXCEPT", "QUALIFY":
+			return 0, false
+		}
+	}
+
+	return tokens[fromIndex].start, true
 }
 
 func tableCountValue(value interface{}) (int64, bool) {
