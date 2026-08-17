@@ -194,7 +194,7 @@ jobs:
             bash -lc '
               set -euxo pipefail
 
-              # Grafana 7.5.5 scans only a plugin's dist directory when one
+              # Grafana 7.5.5 scans only a plugin dist directory when one
               # exists. Some build steps leave incomplete dist trees without
               # plugin.json, so the root manifest is skipped and built-in
               # plugins such as MySQL are not registered at runtime.
