@@ -147,7 +147,6 @@ export function DashList(props: PanelProps<DashListOptions>) {
                         <a className={css.dashlistTitle} href={dash.url}>
                           {dash.title}
                         </a>
-                        {dash.folderTitle && <div className={css.dashlistFolder}>{dash.folderTitle}</div>}
                       </div>
                       <span className={css.dashlistStar} onClick={(e) => toggleDashboardStar(e, dash)}>
                         <Icon name={dash.isStarred ? 'favorite' : 'star'} type={dash.isStarred ? 'mono' : 'default'} />

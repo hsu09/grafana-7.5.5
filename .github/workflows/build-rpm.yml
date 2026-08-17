@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - fix_v10
+      - fix_v11
     paths:
       - '.github/workflows/build-rpm.yml'
       - 'pkg/tsdb/sqleng/**'
@@ -14,6 +14,7 @@ on:
       - 'package.json'
       - 'yarn.lock'
       - 'public/app/plugins/panel/table/**'
+      - 'public/app/plugins/panel/dashlist/**'
       - 'packages/grafana-ui/src/components/Table/**'
       - 'public/app/plugins/datasource/mysql/**'
       - 'public/app/plugins/datasource/postgres/**'
@@ -27,7 +28,7 @@ permissions:
 
 jobs:
   build-rpm:
-    name: Build Grafana 7.5.5 fast-count buffered-XLSX linux x64 RPM
+    name: Build Grafana 7.5.5 compact-dashlist fast-count buffered-XLSX linux x64 RPM
     runs-on: ubuntu-22.04
     timeout-minutes: 180
 
@@ -224,7 +225,7 @@ jobs:
       - name: Upload RPM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: grafana-7.5.5-fix-v10-fast-count-buffered-xlsx-rpm
+          name: grafana-7.5.5-fix-v11-compact-dashlist-fast-count-buffered-xlsx-rpm
           path: |
             dist/*.rpm
             dist/*.sha256
