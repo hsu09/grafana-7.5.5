@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - fix_v11
+      - fix_v12
     paths:
       - '.github/workflows/build-rpm.yml'
       - 'pkg/tsdb/sqleng/**'
@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   build-rpm:
-    name: Build Grafana 7.5.5 compact-dashlist fast-count buffered-XLSX linux x64 RPM
+    name: Build Grafana 7.5.5 fix-v12 linux x64 RPM
     runs-on: ubuntu-22.04
     timeout-minutes: 180
 
@@ -183,6 +183,33 @@ jobs:
               ./bin/grabpl build-plugins --jobs 4 --edition oss --no-install-deps
             '
 
+      - name: Remove incomplete core plugin dist directories
+        run: |
+          set -euxo pipefail
+
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
+            -w /go/src/github.com/grafana/grafana \
+            "${GRAFANA_BUILD_CONTAINER}" \
+            bash -lc '
+              set -euxo pipefail
+
+              # Grafana 7.5.5 scans only a plugin's dist directory when one
+              # exists. Some build steps leave incomplete dist trees without
+              # plugin.json, so the root manifest is skipped and built-in
+              # plugins such as MySQL are not registered at runtime.
+              mapfile -d "" dist_dirs < <(find public/app/plugins -type d -name dist -print0)
+              for dist_dir in "${dist_dirs[@]}"; do
+                if [[ ! -f "${dist_dir}/plugin.json" ]]; then
+                  echo "Removing incomplete core plugin tree: ${dist_dir}"
+                  rm -rf "${dist_dir}"
+                fi
+              done
+
+              test -f public/app/plugins/datasource/mysql/plugin.json
+              test ! -d public/app/plugins/datasource/mysql/dist
+            '
+
       - name: Generate package version
         run: |
           set -euxo pipefail
@@ -220,12 +247,20 @@ jobs:
               ./bin/grabpl package --jobs 4 --edition oss --build-id "${DRONE_BUILD_NUMBER}" --no-pull-enterprise --variants linux-x64
 
               find dist -maxdepth 1 -type f -name "*.rpm" -ls
+
+              rpm_file="$(find dist -maxdepth 1 -type f -name "*.rpm" -print -quit)"
+              test -n "${rpm_file}"
+              rpm -qpl "${rpm_file}" | grep -Fx "/usr/share/grafana/public/app/plugins/datasource/mysql/plugin.json"
+              if rpm -qpl "${rpm_file}" | grep -q "^/usr/share/grafana/public/app/plugins/datasource/mysql/dist"; then
+                echo "MySQL contains an incomplete dist tree and would not be registered"
+                exit 1
+              fi
             '
 
       - name: Upload RPM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: grafana-7.5.5-fix-v11-compact-dashlist-fast-count-buffered-xlsx-rpm
+          name: grafana-7.5.5-fix-v12-mysql-core-plugin-rpm
           path: |
             dist/*.rpm
             dist/*.sha256
