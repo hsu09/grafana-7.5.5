@@ -260,7 +260,7 @@ jobs:
       - name: Upload RPM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: grafana-7.5.5-fix-v12-mysql-core-plugin-rpm
+          name: grafana-7.5.5-fix-v13-full-list-rpm
           path: |
             dist/*.rpm
             dist/*.sha256
