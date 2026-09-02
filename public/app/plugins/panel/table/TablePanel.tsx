@@ -1,6 +1,6 @@
 import React, { Component } from 'react';
 
-import { Button, Select, Table } from '@grafana/ui';
+import { Button, ClipboardButton, Modal, Select, Table, TextArea } from '@grafana/ui';
 import {
   AppEvents,
   DataFrame,
@@ -20,6 +20,7 @@ import { dispatch } from '../../../store/store';
 import { applyFilterFromTable } from '../../../features/variables/adhoc/actions';
 import { getDashboardSrv } from '../../../features/dashboard/services/DashboardSrv';
 import { exportDataFrameToExcel } from './excel';
+import { buildPlainTextTable, TABLE_TEXT_ROW_LIMIT } from './plainText';
 import appEvents from 'app/core/app_events';
 
 interface Props extends PanelProps<Options> {}
@@ -29,6 +30,7 @@ interface State {
   exportStatus: string;
   counting: boolean;
   totalRows?: number;
+  showFullList: boolean;
 }
 
 interface TableCountResponse {
@@ -52,6 +54,7 @@ export class TablePanel extends Component<Props, State> {
     exporting: false,
     exportStatus: '',
     counting: false,
+    showFullList: false,
   };
 
   private countRequestId = 0;
@@ -285,6 +288,15 @@ export class TablePanel extends Component<Props, State> {
           {rowCount === undefined ? 'Counting rows...' : `${rowCount.toLocaleString()}${rowCountSuffix} rows`}
         </div>
         <Button
+          icon="eye"
+          size="sm"
+          variant="secondary"
+          disabled={!frame}
+          onClick={() => this.setState({ showFullList: true })}
+        >
+          Full list
+        </Button>
+        <Button
           icon="download-alt"
           size="sm"
           variant="secondary"
@@ -294,6 +306,52 @@ export class TablePanel extends Component<Props, State> {
           {this.state.exportStatus || 'Export'}
         </Button>
       </div>
+    );
+  }
+
+  renderFullList(frame: DataFrame) {
+    if (!this.state.showFullList) {
+      return null;
+    }
+
+    const plainText = buildPlainTextTable(frame, TABLE_TEXT_ROW_LIMIT);
+    const description = plainText.truncated
+      ? `Showing the first ${plainText.rowCount.toLocaleString()} of ${frame.length.toLocaleString()} rows. Use Export for all rows.`
+      : `${plainText.rowCount.toLocaleString()} rows. Values are complete and not visually truncated.`;
+
+    return (
+      <Modal
+        title={`${this.props.title} - Full list`}
+        icon="table"
+        isOpen={true}
+        onDismiss={() => this.setState({ showFullList: false })}
+        className={tableStyles.fullListModal}
+        contentClassName={tableStyles.fullListContent}
+      >
+        <div className={tableStyles.fullListDescription}>{description}</div>
+        <TextArea
+          className={tableStyles.fullListText}
+          value={plainText.text}
+          readOnly={true}
+          wrap="soft"
+          aria-label="Full table text"
+        />
+        <div className={tableStyles.fullListActions}>
+          <ClipboardButton
+            icon="copy"
+            size="sm"
+            variant="primary"
+            getText={() => plainText.text}
+            onClipboardCopy={() => appEvents.emit(AppEvents.alertSuccess, ['Full table copied'])}
+            onClipboardError={() => appEvents.emit(AppEvents.alertError, ['Unable to copy table'])}
+          >
+            Copy
+          </ClipboardButton>
+          <Button size="sm" variant="secondary" onClick={() => this.setState({ showFullList: false })}>
+            Close
+          </Button>
+        </div>
+      </Modal>
     );
   }
 
@@ -327,24 +385,30 @@ export class TablePanel extends Component<Props, State> {
       });
 
       return (
-        <div className={tableStyles.wrapper}>
-          {this.renderToolbar(
-            currentFrame,
-            <div className={tableStyles.selectWrapper}>
-              <Select options={names} value={names[currentIndex]} onChange={this.onChangeTableSelection} />
-            </div>
-          )}
-          {this.renderTable(currentFrame, width, height - toolbarHeight)}
-        </div>
+        <>
+          <div className={tableStyles.wrapper}>
+            {this.renderToolbar(
+              currentFrame,
+              <div className={tableStyles.selectWrapper}>
+                <Select options={names} value={names[currentIndex]} onChange={this.onChangeTableSelection} />
+              </div>
+            )}
+            {this.renderTable(currentFrame, width, height - toolbarHeight)}
+          </div>
+          {this.renderFullList(currentFrame)}
+        </>
       );
     }
 
     const currentFrame = data.series[0];
     return (
-      <div className={tableStyles.wrapper}>
-        {this.renderToolbar(currentFrame)}
-        {this.renderTable(currentFrame, width, height - toolbarHeight)}
-      </div>
+      <>
+        <div className={tableStyles.wrapper}>
+          {this.renderToolbar(currentFrame)}
+          {this.renderTable(currentFrame, width, height - toolbarHeight)}
+        </div>
+        {this.renderFullList(currentFrame)}
+      </>
     );
   }
 }
@@ -384,6 +448,35 @@ const tableStyles = {
     flex: 1;
     min-width: 0;
     pointer-events: auto;
+  `,
+  fullListModal: css`
+    width: 92vw;
+    max-width: 1800px;
+    top: 4vh;
+  `,
+  fullListContent: css`
+    display: flex;
+    flex-direction: column;
+    max-height: calc(92vh - 42px);
+  `,
+  fullListDescription: css`
+    color: ${config.theme.colors.textWeak};
+    margin-bottom: 8px;
+  `,
+  fullListText: css`
+    flex: 1;
+    min-height: 68vh;
+    resize: none;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: ${config.theme.typography.fontFamily.monospace};
+    line-height: 1.45;
+  `,
+  fullListActions: css`
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
   `,
   emptyState: css`
     display: flex;

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - fix_v12
+      - fix_v13
     paths:
       - '.github/workflows/build-rpm.yml'
       - 'pkg/tsdb/sqleng/**'
@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   build-rpm:
-    name: Build Grafana 7.5.5 fix-v12 linux x64 RPM
+    name: Build Grafana 7.5.5 fix-v13 linux x64 RPM
     runs-on: ubuntu-22.04
     timeout-minutes: 180
 
