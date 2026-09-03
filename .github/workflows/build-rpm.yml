@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - fix_v12
+      - fix_v14
     paths:
       - '.github/workflows/build-rpm.yml'
       - 'pkg/tsdb/sqleng/**'
@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   build-rpm:
-    name: Build Grafana 7.5.5 fix-v12 linux x64 RPM
+    name: Build Grafana 7.5.5 fix-v14 linux x64 RPM
     runs-on: ubuntu-22.04
     timeout-minutes: 180
 
@@ -167,6 +167,20 @@ jobs:
               ./bin/grabpl build-frontend --jobs 4 --edition oss --build-id "${DRONE_BUILD_NUMBER}" --no-install-deps --no-pull-enterprise
             '
 
+      - name: Test dashboard order-last sorting
+        run: |
+          set -euxo pipefail
+
+          docker run --rm \
+            -e NODE_OPTIONS="--max_old_space_size=4096" \
+            -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
+            -w /go/src/github.com/grafana/grafana \
+            "${GRAFANA_BUILD_CONTAINER}" \
+            bash -lc '
+              set -euxo pipefail
+              yarn jest public/app/plugins/panel/dashlist/sort.test.ts --ci --runInBand
+            '
+
       - name: Build plugins
         run: |
           set -euxo pipefail
@@ -260,7 +274,7 @@ jobs:
       - name: Upload RPM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: grafana-7.5.5-fix-v12-mysql-core-plugin-rpm
+          name: grafana-7.5.5-fix-v14-order-last-rpm
           path: |
             dist/*.rpm
             dist/*.sha256

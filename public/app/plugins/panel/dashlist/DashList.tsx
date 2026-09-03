@@ -10,6 +10,7 @@ import impressionSrv from 'app/core/services/impression_srv';
 import { DashboardSearchHit } from 'app/features/search/types';
 import { DashListOptions } from './types';
 import { getStyles } from './styles';
+import { compareDashboards } from './sort';
 
 type Dashboard = DashboardSearchHit & { isSearchResult?: boolean; isRecent?: boolean };
 
@@ -105,9 +106,9 @@ export function DashList(props: PanelProps<DashListOptions>) {
   const [starredDashboards, recentDashboards, searchedDashboards] = useMemo(() => {
     const dashboardList = [...dashboards.values()];
     return [
-      dashboardList.filter((dash) => dash.isStarred).sort((a, b) => a.title.localeCompare(b.title)),
+      dashboardList.filter((dash) => dash.isStarred).sort(compareDashboards),
       dashboardList.filter((dash) => dash.isRecent),
-      dashboardList.filter((dash) => dash.isSearchResult).sort((a, b) => a.title.localeCompare(b.title)),
+      dashboardList.filter((dash) => dash.isSearchResult).sort(compareDashboards),
     ];
   }, [dashboards]);
 
