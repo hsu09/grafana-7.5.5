@@ -22,10 +22,6 @@ describe('compareDashboards', () => {
       { title: 'Normal', tags: ['order-last-extra'] },
     ];
 
-    expect(dashboards.sort(compareDashboards).map((dashboard) => dashboard.title)).toEqual([
-      'Normal',
-      'Alpha',
-      'Zeta',
-    ]);
+    expect(dashboards.sort(compareDashboards).map((dashboard) => dashboard.title)).toEqual(['Normal', 'Alpha', 'Zeta']);
   });
 });

@@ -113,6 +113,21 @@ jobs:
               exit 1
             '
 
+      - name: Check and test dashboard order-last sorting
+        run: |
+          set -euxo pipefail
+
+          docker run --rm \
+            -e NODE_OPTIONS="--max_old_space_size=4096" \
+            -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
+            -w /go/src/github.com/grafana/grafana \
+            "${GRAFANA_BUILD_CONTAINER}" \
+            bash -lc '
+              set -euxo pipefail
+              yarn prettier --check public/app/plugins/panel/dashlist/DashList.tsx public/app/plugins/panel/dashlist/sort.ts public/app/plugins/panel/dashlist/sort.test.ts
+              yarn jest public/app/plugins/panel/dashlist/sort.test.ts --ci --runInBand
+            '
+
       - name: Build backend
         run: |
           set -euxo pipefail
@@ -165,20 +180,6 @@ jobs:
               set -euxo pipefail
               export PATH="${GOROOT}/bin:${PATH}"
               ./bin/grabpl build-frontend --jobs 4 --edition oss --build-id "${DRONE_BUILD_NUMBER}" --no-install-deps --no-pull-enterprise
-            '
-
-      - name: Test dashboard order-last sorting
-        run: |
-          set -euxo pipefail
-
-          docker run --rm \
-            -e NODE_OPTIONS="--max_old_space_size=4096" \
-            -v "${GITHUB_WORKSPACE}:/go/src/github.com/grafana/grafana" \
-            -w /go/src/github.com/grafana/grafana \
-            "${GRAFANA_BUILD_CONTAINER}" \
-            bash -lc '
-              set -euxo pipefail
-              yarn jest public/app/plugins/panel/dashlist/sort.test.ts --ci --runInBand
             '
 
       - name: Build plugins
